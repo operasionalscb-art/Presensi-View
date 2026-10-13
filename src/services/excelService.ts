@@ -90,3 +90,74 @@ export function downloadSampleExcelTemplate() {
   XLSX.utils.book_append_sheet(workbook, worksheet, 'Presensi Harian');
   XLSX.writeFile(workbook, 'Template_Presensi_Karyawan.xlsx');
 }
+
+export function exportMonthlyReportToExcel(report: any) {
+  const summaryData = [
+    ['REKAPITULASI PRESENSI BULANAN'],
+    [`Periode: ${report.monthName} ${report.year}`],
+    [`Total Hari Kerja Terdata: ${report.recordedDaysCount} Hari`],
+    [`Rata-rata Kehadiran: ${report.avgAttendanceRate}%`],
+    [`Total Kasus Terlambat: ${report.totalTelatCases}`],
+    [`Total Izin: ${report.totalIzinCases} | Sakit: ${report.totalSakitCases} | Cuti: ${report.totalCutiCases} | Alpha: ${report.totalAlphaCases}`],
+    [],
+    [
+      'ID Karyawan',
+      'Nama Karyawan',
+      'Departemen',
+      'Jabatan',
+      'Hari Tercatat',
+      'Hadir Tepat Waktu',
+      'Terlambat (Kali)',
+      'Total Menit Telat',
+      'Izin',
+      'Sakit',
+      'Cuti',
+      'Alpha',
+      'Tingkat Kehadiran (%)',
+    ],
+    ...report.employeeSummaries.map((e: any) => [
+      e.employeeId,
+      e.name,
+      e.department,
+      e.jobPosition,
+      e.totalDays,
+      e.totalHadir,
+      e.totalTelat,
+      e.totalLateMinutes,
+      e.totalIzin,
+      e.totalSakit,
+      e.totalCuti,
+      e.totalAlpha,
+      `${e.attendanceRate}%`,
+    ]),
+  ];
+
+  const ws = XLSX.utils.aoa_to_sheet(summaryData);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, `Rekap ${report.monthName} ${report.year}`);
+  XLSX.writeFile(wb, `Rekap_Presensi_${report.monthName}_${report.year}.xlsx`);
+}
+
+export function exportYearlyReportToExcel(report: any) {
+  const summaryData = [
+    [`REKAPITULASI PRESENSI TAHUNAN ${report.year}`],
+    [`Total Hari Tercatat: ${report.recordedDaysCount}`],
+    [`Rata-rata Kehadiran Tahunan: ${report.overallRate}%`],
+    [`Total Terlambat Setahun: ${report.totalTelatYear}`],
+    [`Total Izin: ${report.totalIzinYear} | Sakit: ${report.totalSakitYear} | Cuti: ${report.totalCutiYear} | Alpha: ${report.totalAlphaYear}`],
+    [],
+    ['Bulan', 'Hari Tercatat', 'Rata-rata Kehadiran (%)', 'Total Kasus Telat', 'Total Absen (I/S/C/A)'],
+    ...report.monthlyStats.map((m: any) => [
+      m.monthName,
+      m.daysCount,
+      `${m.avgRate}%`,
+      m.totalTelat,
+      m.totalAbsen,
+    ]),
+  ];
+
+  const ws = XLSX.utils.aoa_to_sheet(summaryData);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, `Rekap Tahunan ${report.year}`);
+  XLSX.writeFile(wb, `Rekap_Presensi_Tahunan_${report.year}.xlsx`);
+}

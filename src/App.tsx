@@ -21,10 +21,18 @@ import { Header } from './components/Header';
 import { CumulativeStats } from './components/CumulativeStats';
 import { AbsenceAndLateLists } from './components/AbsenceAndLateLists';
 import { InteractiveTrendChart } from './components/InteractiveTrendChart';
+import { MonthlyYearlyReports } from './components/MonthlyYearlyReports';
 import { DataSourceModal } from './components/DataSourceModal';
 import { AddRecordModal } from './components/AddRecordModal';
 import {
+  saveDayHistory,
+  getHistoryForDate,
+} from './services/storageService';
+import {
   CheckCircle2,
+  Calendar,
+  BarChart3,
+  Database,
 } from 'lucide-react';
 
 export default function App() {
@@ -152,6 +160,20 @@ export default function App() {
     return () => clearInterval(interval);
   }, [autoSync, syncIntervalSec, performSync]);
 
+  // View Mode: 'harian' (Daily Dashboard) or 'rekap' (Monthly & Yearly Aggregations from Daily Archives)
+  const [viewMode, setViewMode] = useState<'harian' | 'rekap'>('harian');
+
+  // Load existing data for date on mount or date change
+  useEffect(() => {
+    const stored = getHistoryForDate(currentDate);
+    if (stored && stored.length > 0) {
+      setEmployees(stored);
+    } else {
+      // Save current date's initial dataset into archive
+      saveDayHistory(currentDate, employees, sourceName);
+    }
+  }, [currentDate]);
+
   const handleApplyNewData = (
     newEmployees: EmployeeRecord[],
     newType: 'google-sheets' | 'excel' | 'initial',
@@ -165,13 +187,22 @@ export default function App() {
     setConnectedSpreadsheetId(sheetId);
     setConnectedSheetName(sheetTab);
     setLastSyncTime(new Date());
-    showToast(`Data presensi berhasil diperbarui (${newEmployees.length} karyawan).`);
+
+    // Automatically persist to daily history archive so it enriches monthly & yearly reports!
+    saveDayHistory(currentDate, newEmployees, newName);
+
+    showToast(`Data presensi berhasil diperbarui & disimpan ke arsip (${newEmployees.length} karyawan).`);
   };
 
   const handleAddEmployee = (newRecord: EmployeeRecord) => {
-    setEmployees((prev) => [newRecord, ...prev]);
+    const updated = [newRecord, ...employees];
+    setEmployees(updated);
     setLastSyncTime(new Date());
-    showToast(`Input presensi baru untuk "${newRecord.name}" berhasil ditambahkan.`);
+
+    // Automatically persist to daily history archive
+    saveDayHistory(currentDate, updated, sourceName);
+
+    showToast(`Input presensi baru untuk "${newRecord.name}" berhasil ditambahkan & disimpan ke arsip.`);
   };
 
   const handleSelectDayFromChart = (day: number) => {
@@ -209,60 +240,82 @@ export default function App() {
         isLoggingIn={isLoggingIn}
       />
 
-      {/* Source & Auto-Update Status Banner */}
+      {/* View Switcher Bar & Storage Status */}
       <div className="bg-slate-900/90 text-slate-300 border-b border-slate-800 text-xs py-2 px-4 sm:px-8">
-        <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
+        <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
+          {/* Mode Switcher Tabs */}
+          <div className="flex items-center bg-slate-800/90 p-1 rounded-lg border border-slate-700/80">
+            <button
+              onClick={() => setViewMode('harian')}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold transition ${
+                viewMode === 'harian'
+                  ? 'bg-emerald-600 text-white shadow-xs'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Calendar className="w-3.5 h-3.5" />
+              <span>Presensi Harian</span>
+            </button>
+            <button
+              onClick={() => setViewMode('rekap')}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold transition ${
+                viewMode === 'rekap'
+                  ? 'bg-emerald-600 text-white shadow-xs'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <BarChart3 className="w-3.5 h-3.5" />
+              <span>Rekap Bulanan & Tahunan</span>
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2 text-[11px] text-slate-400">
             <span className="flex h-2 w-2 relative">
               <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${autoSync ? 'bg-emerald-400 opacity-75' : 'bg-slate-500'}`}></span>
               <span className={`relative inline-flex rounded-full h-2 w-2 ${autoSync ? 'bg-emerald-500' : 'bg-slate-500'}`}></span>
             </span>
-            <span className="text-slate-400">
-              Sumber Data:{' '}
-              <strong className="text-slate-200">{sourceName}</strong>
-            </span>
-            <span className="text-slate-600 dark:text-slate-700">•</span>
-            <span className="text-slate-400">
-              Format Gambar: <strong className="text-emerald-400">Tersinkronisasi 100%</strong>
-            </span>
-          </div>
-
-          <div className="flex items-center gap-3 text-[11px] text-slate-400">
             <span>
-              Terakhir diperbarui:{' '}
-              <strong className="text-slate-300">
-                {lastSyncTime ? lastSyncTime.toLocaleTimeString('id-ID') : '-'}
-              </strong>
+              Arsip Excel Otomatis:{' '}
+              <strong className="text-emerald-400">Aktif & Tersimpan Permanen</strong>
             </span>
-            <button
-              onClick={() => setIsAddModalOpen(true)}
-              className="text-emerald-400 hover:text-emerald-300 underline font-medium"
-            >
-              + Tambah Input Presensi
-            </button>
           </div>
         </div>
       </div>
 
       {/* Main Dashboard Content */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-5 space-y-5">
-        {/* Cumulative Stats: Highlights total on-time present employees cumulatively without individual names */}
-        <CumulativeStats
-          employees={employees}
-          activeDateText={`${activeDay} ${monthName} ${year}`}
-        />
+        {viewMode === 'harian' ? (
+          <>
+            {/* Cumulative Stats: Highlights total on-time present employees cumulatively without individual names */}
+            <CumulativeStats
+              employees={employees}
+              activeDateText={`${activeDay} ${monthName} ${year}`}
+            />
 
-        {/* Detailed Breakdown: Specifically lists names, job positions, and reasons for late arrivals and absences */}
-        <AbsenceAndLateLists employees={employees} />
+            {/* Detailed Breakdown: Specifically lists names, job positions, and reasons for late arrivals and absences */}
+            <AbsenceAndLateLists employees={employees} />
 
-        {/* Interactive Monthly Trend: Attendance percentage, stacked bar distribution, and late arrival frequency */}
-        <InteractiveTrendChart
-          trendData={trendData}
-          selectedDay={activeDay}
-          onSelectDay={handleSelectDayFromChart}
-          monthName={monthName}
-          year={year}
-        />
+            {/* Interactive Monthly Trend: Attendance percentage, stacked bar distribution, and late arrival frequency */}
+            <InteractiveTrendChart
+              trendData={trendData}
+              selectedDay={activeDay}
+              onSelectDay={handleSelectDayFromChart}
+              monthName={monthName}
+              year={year}
+            />
+          </>
+        ) : (
+          /* Monthly & Yearly Aggregation Reports */
+          <MonthlyYearlyReports
+            currentYear={year}
+            currentMonth={new Date(currentDate).getMonth() + 1 || 10}
+            onSelectDate={(dateStr) => {
+              setCurrentDate(dateStr);
+              setViewMode('harian');
+              showToast(`Membuka data harian tanggal ${dateStr}`);
+            }}
+          />
+        )}
       </main>
 
       {/* Modals */}
