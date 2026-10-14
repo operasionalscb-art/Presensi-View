@@ -2,10 +2,6 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    function isSignedIn() {
-      return request.auth != null;
-    }
-
     function isValidId(id) {
       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
@@ -32,9 +28,9 @@ service cloud.firestore {
 
     // Daily attendance records
     match /daily_records/{dateId} {
-      allow get, list: if isSignedIn();
-      allow create, update: if isSignedIn() && isValidId(dateId) && isValidDailyRecord(request.resource.data);
-      allow delete: if isSignedIn() && isValidId(dateId);
+      allow get, list: if true;
+      allow create, update: if isValidId(dateId) && isValidDailyRecord(request.resource.data);
+      allow delete: if isValidId(dateId);
     }
   }
 }
