@@ -26,6 +26,7 @@ import { DataSourceModal } from './components/DataSourceModal';
 import { AddRecordModal } from './components/AddRecordModal';
 import {
   saveDayToFirestore,
+  saveMultipleDaysToFirestore,
   deleteDayFromFirestore,
   subscribeDailyRecords,
   StoredDayRecord,
@@ -37,7 +38,6 @@ import {
   FileSpreadsheet,
   PlusCircle,
   Database,
-  CloudCheck,
 } from 'lucide-react';
 
 export default function App() {
@@ -211,7 +211,9 @@ export default function App() {
     newType: 'google-sheets' | 'excel' | 'initial',
     newName: string,
     sheetId?: string,
-    sheetTab?: string
+    sheetTab?: string,
+    targetDate?: string,
+    multiDayRecords?: Record<string, EmployeeRecord[]>
   ) => {
     setSourceType(newType);
     setSourceName(newName);
@@ -219,12 +221,31 @@ export default function App() {
     setConnectedSheetName(sheetTab);
     setLastSyncTime(new Date());
 
-    // Save directly to Firebase Firestore
-    try {
-      await saveDayToFirestore(currentDate, newEmployees, newName);
-      showToast(`Data presensi tanggal ${currentDate} berhasil disimpan ke Firebase (${newEmployees.length} karyawan).`);
-    } catch (err: any) {
-      showToast('Gagal menyimpan ke Firebase Firestore.');
+    if (multiDayRecords && Object.keys(multiDayRecords).length > 1) {
+      // MULTI-DAY BATCH SAVE TO FIRESTORE
+      const dates = Object.keys(multiDayRecords);
+      const batchPayload: Record<string, { employees: EmployeeRecord[]; sourceName?: string }> = {};
+      dates.forEach((d) => {
+        batchPayload[d] = { employees: multiDayRecords[d], sourceName: newName };
+      });
+      try {
+        const savedDates = await saveMultipleDaysToFirestore(batchPayload);
+        const lastDate = savedDates[savedDates.length - 1];
+        if (lastDate) setCurrentDate(lastDate);
+        showToast(`Berhasil menyimpan ${savedDates.length} hari data presensi ke Firebase!`);
+      } catch (err: any) {
+        showToast('Gagal menyimpan data multi-hari ke Firebase.');
+      }
+    } else {
+      // SINGLE DAY SAVE
+      const dateToSave = targetDate || currentDate;
+      try {
+        await saveDayToFirestore(dateToSave, newEmployees, newName);
+        setCurrentDate(dateToSave);
+        showToast(`Data presensi tanggal ${dateToSave} (${newEmployees.length} karyawan) berhasil disimpan ke Firebase.`);
+      } catch (err: any) {
+        showToast('Gagal menyimpan data ke Firebase.');
+      }
     }
   };
 
@@ -253,7 +274,7 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans transition-colors">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans transition-colors">
       {/* Toast Alert */}
       {toastMessage && (
         <div className="fixed bottom-5 right-5 z-50 bg-slate-900 text-white text-xs px-4 py-3 rounded-xl shadow-xl border border-slate-700 flex items-center gap-2.5 animate-in slide-in-from-bottom-2">
@@ -418,6 +439,7 @@ export default function App() {
           spreadsheetId: connectedSpreadsheetId,
           sheetName: connectedSheetName,
         }}
+        currentSelectedDate={currentDate}
       />
 
       <AddRecordModal

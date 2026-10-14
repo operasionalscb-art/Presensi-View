@@ -36,9 +36,11 @@ export const CumulativeStats: React.FC<CumulativeStatsProps> = ({
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
       {/* 1. Total Karyawan */}
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow-xs">
-        <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-2">
-          <span className="text-xs font-medium">Total Karyawan</span>
-          <Users className="w-4 h-4 text-blue-500" />
+        <div className="flex items-center justify-between text-slate-600 dark:text-slate-300 mb-2">
+          <span className="text-xs font-semibold">Total Karyawan</span>
+          <div className="p-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+            <Users className="w-4 h-4" />
+          </div>
         </div>
         <div className="flex items-baseline gap-1.5">
           <span className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-white">
@@ -46,62 +48,70 @@ export const CumulativeStats: React.FC<CumulativeStatsProps> = ({
           </span>
           <span className="text-xs text-slate-500">orang</span>
         </div>
-        <p className="text-[11px] text-slate-400 mt-1.5">Data terdaftar aktif</p>
+        <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1.5">
+          Terdata aktif hari ini
+        </p>
       </div>
 
       {/* 2. Hadir Tepat Waktu (Kumulatif, tanpa nama) */}
-      <div className="bg-emerald-50/60 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/60 rounded-xl p-4 shadow-xs">
-        <div className="flex items-center justify-between text-emerald-800 dark:text-emerald-300 mb-2">
+      <div className="bg-white dark:bg-slate-900 border border-emerald-200 dark:border-emerald-800/80 rounded-xl p-4 shadow-xs">
+        <div className="flex items-center justify-between text-slate-600 dark:text-slate-300 mb-2">
           <span className="text-xs font-semibold">Hadir Tepat Waktu</span>
-          <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+          <div className="p-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400">
+            <CheckCircle2 className="w-4 h-4" />
+          </div>
         </div>
         <div className="flex items-baseline gap-2">
-          <span className="text-2xl sm:text-3xl font-bold text-emerald-700 dark:text-emerald-400">
+          <span className="text-2xl sm:text-3xl font-bold text-emerald-600 dark:text-emerald-400">
             {totalHadir}
           </span>
-          <span className="text-xs font-medium text-emerald-800 dark:text-emerald-400">
-            ({onTimePercent}%)
+          <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-1.5 py-0.5 rounded">
+            {onTimePercent}%
           </span>
         </div>
-        <p className="text-[11px] text-emerald-800 dark:text-emerald-400 mt-1.5">
+        <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1.5">
           Kumulatif (nama tidak ditampilkan)
         </p>
       </div>
 
       {/* 3. Karyawan Telat */}
-      <div className="bg-amber-50/60 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/60 rounded-xl p-4 shadow-xs">
-        <div className="flex items-center justify-between text-amber-800 dark:text-amber-300 mb-2">
+      <div className="bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-800/80 rounded-xl p-4 shadow-xs">
+        <div className="flex items-center justify-between text-slate-600 dark:text-slate-300 mb-2">
           <span className="text-xs font-semibold">Karyawan Telat</span>
-          <Clock className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+          <div className="p-1.5 rounded-lg bg-amber-50 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400">
+            <Clock className="w-4 h-4" />
+          </div>
         </div>
         <div className="flex items-baseline gap-2">
-          <span className="text-2xl sm:text-3xl font-bold text-amber-700 dark:text-amber-400">
+          <span className="text-2xl sm:text-3xl font-bold text-amber-600 dark:text-amber-400">
             {totalTelat}
           </span>
-          <span className="text-xs font-medium text-amber-800 dark:text-amber-400">
-            ({latePercent}%)
+          <span className="text-xs font-semibold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 px-1.5 py-0.5 rounded">
+            {latePercent}%
           </span>
         </div>
-        <p className="text-[11px] text-amber-800 dark:text-amber-400 mt-1.5">
-          Lihat daftar nama di bawah
+        <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1.5">
+          Nama & alasan di tabel bawah
         </p>
       </div>
 
       {/* 4. Tidak Masuk (Izin, Sakit, Cuti, Alpha) */}
-      <div className="bg-rose-50/60 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-800/60 rounded-xl p-4 shadow-xs">
-        <div className="flex items-center justify-between text-rose-800 dark:text-rose-300 mb-2">
+      <div className="bg-white dark:bg-slate-900 border border-rose-200 dark:border-rose-800/80 rounded-xl p-4 shadow-xs">
+        <div className="flex items-center justify-between text-slate-600 dark:text-slate-300 mb-2">
           <span className="text-xs font-semibold">Tidak Masuk</span>
-          <UserX className="w-4 h-4 text-rose-600 dark:text-rose-400" />
+          <div className="p-1.5 rounded-lg bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400">
+            <UserX className="w-4 h-4" />
+          </div>
         </div>
         <div className="flex items-baseline gap-2">
-          <span className="text-2xl sm:text-3xl font-bold text-rose-700 dark:text-rose-400">
+          <span className="text-2xl sm:text-3xl font-bold text-rose-600 dark:text-rose-400">
             {totalTidakMasuk}
           </span>
-          <span className="text-xs font-medium text-rose-800 dark:text-rose-400">
-            ({absentPercent}%)
+          <span className="text-xs font-semibold text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/60 px-1.5 py-0.5 rounded">
+            {absentPercent}%
           </span>
         </div>
-        <p className="text-[11px] text-rose-800 dark:text-rose-400 mt-1.5">
+        <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1.5">
           Izin: {izinList.length} • Sakit: {sakitList.length} • Cuti: {cutiList.length}
         </p>
       </div>

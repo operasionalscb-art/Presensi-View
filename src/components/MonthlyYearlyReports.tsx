@@ -37,6 +37,7 @@ export const MonthlyYearlyReports: React.FC<MonthlyYearlyReportsProps> = ({
   const [reportType, setReportType] = useState<'monthly' | 'yearly'>('monthly');
   const [selectedMonth, setSelectedMonth] = useState<number>(currentMonth);
   const [selectedYear, setSelectedYear] = useState<number>(currentYear);
+  const [confirmDeleteDate, setConfirmDeleteDate] = useState<string | null>(null);
 
   const monthlyReport: MonthReport = calculateMonthlyReport(records, selectedYear, selectedMonth);
   const yearlyReport: YearReport = calculateYearlyReport(records, selectedYear);
@@ -95,7 +96,7 @@ export const MonthlyYearlyReports: React.FC<MonthlyYearlyReportsProps> = ({
               onClick={() => setReportType('monthly')}
               className={`px-3 py-1.5 rounded-md transition ${
                 reportType === 'monthly'
-                  ? 'bg-white dark:bg-slate-900 text-teal-600 dark:text-teal-400 shadow-2xs font-bold'
+                  ? 'bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 shadow-2xs font-bold'
                   : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
               }`}
             >
@@ -105,7 +106,7 @@ export const MonthlyYearlyReports: React.FC<MonthlyYearlyReportsProps> = ({
               onClick={() => setReportType('yearly')}
               className={`px-3 py-1.5 rounded-md transition ${
                 reportType === 'yearly'
-                  ? 'bg-white dark:bg-slate-900 text-teal-600 dark:text-teal-400 shadow-2xs font-bold'
+                  ? 'bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 shadow-2xs font-bold'
                   : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
               }`}
             >
@@ -305,28 +306,28 @@ export const MonthlyYearlyReports: React.FC<MonthlyYearlyReportsProps> = ({
                         </td>
                         <td className="py-2.5 px-3 text-center font-mono">
                           {emp.totalIzin > 0 ? (
-                            <span className="text-blue-600 font-semibold">{emp.totalIzin}</span>
+                            <span className="text-sky-600 dark:text-sky-400 font-semibold">{emp.totalIzin}</span>
                           ) : (
                             <span className="text-slate-300">-</span>
                           )}
                         </td>
                         <td className="py-2.5 px-3 text-center font-mono">
                           {emp.totalSakit > 0 ? (
-                            <span className="text-rose-600 font-semibold">{emp.totalSakit}</span>
+                            <span className="text-rose-600 dark:text-rose-400 font-semibold">{emp.totalSakit}</span>
                           ) : (
                             <span className="text-slate-300">-</span>
                           )}
                         </td>
                         <td className="py-2.5 px-3 text-center font-mono">
                           {emp.totalCuti > 0 ? (
-                            <span className="text-purple-600 font-semibold">{emp.totalCuti}</span>
+                            <span className="text-purple-600 dark:text-purple-400 font-semibold">{emp.totalCuti}</span>
                           ) : (
                             <span className="text-slate-300">-</span>
                           )}
                         </td>
                         <td className="py-2.5 px-3 text-center font-mono">
                           {emp.totalAlpha > 0 ? (
-                            <span className="text-red-600 font-bold">{emp.totalAlpha}</span>
+                            <span className="text-red-600 dark:text-red-400 font-bold">{emp.totalAlpha}</span>
                           ) : (
                             <span className="text-slate-300">-</span>
                           )}
@@ -374,7 +375,7 @@ export const MonthlyYearlyReports: React.FC<MonthlyYearlyReportsProps> = ({
 
             <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 shadow-xs">
               <span className="text-xs text-slate-500">Izin & Sakit</span>
-              <div className="text-2xl font-bold text-blue-600 dark:text-blue-400 mt-1">
+              <div className="text-2xl font-bold text-sky-600 dark:text-sky-400 mt-1">
                 {yearlyReport.totalIzinYear + yearlyReport.totalSakitYear} Hari
               </div>
               <span className="text-[11px] text-slate-400">
@@ -442,17 +443,34 @@ export const MonthlyYearlyReports: React.FC<MonthlyYearlyReportsProps> = ({
                 >
                   {dateStr} ({count} org)
                 </button>
-                <button
-                  onClick={() => {
-                    if (window.confirm(`Hapus data presensi tanggal ${dateStr} dari Firestore?`)) {
-                      onDeleteDate(dateStr);
-                    }
-                  }}
-                  className="text-slate-400 hover:text-rose-500 p-1 transition"
-                  title="Hapus data tanggal ini dari Firebase"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
+                {confirmDeleteDate === dateStr ? (
+                  <div className="flex items-center gap-1 bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800 rounded px-1.5 py-0.5 text-[10px]">
+                    <span className="text-rose-700 dark:text-rose-300 font-semibold">Hapus?</span>
+                    <button
+                      onClick={() => {
+                        onDeleteDate(dateStr);
+                        setConfirmDeleteDate(null);
+                      }}
+                      className="text-white bg-rose-600 hover:bg-rose-500 px-1.5 py-0.5 rounded font-bold"
+                    >
+                      Ya
+                    </button>
+                    <button
+                      onClick={() => setConfirmDeleteDate(null)}
+                      className="text-slate-500 hover:text-slate-700 px-1"
+                    >
+                      Batal
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setConfirmDeleteDate(dateStr)}
+                    className="text-slate-400 hover:text-rose-500 p-1 transition"
+                    title="Hapus data tanggal ini dari Firebase"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
               </div>
             );
           })}

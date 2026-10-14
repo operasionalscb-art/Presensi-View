@@ -7,9 +7,13 @@ import {
   Check,
   AlertCircle,
   RefreshCw,
-  ExternalLink,
   FolderOpen,
   Link as LinkIcon,
+  Calendar,
+  Layers,
+  Users,
+  Clock,
+  ArrowRight,
 } from 'lucide-react';
 import type { User } from 'firebase/auth';
 import {
@@ -19,8 +23,8 @@ import {
   extractSpreadsheetIdFromUrl,
   DriveSpreadsheetFile,
 } from '../services/googleSheets';
-import { parseRowsToEmployees } from '../services/dataParser';
-import { parseExcelFile, downloadSampleExcelTemplate } from '../services/excelService';
+import { parseComprehensiveAttendance } from '../services/dataParser';
+import { parseExcelFile, downloadSampleExcelTemplate, ExcelParseResult } from '../services/excelService';
 import { EmployeeRecord } from '../types/attendance';
 
 interface DataSourceModalProps {
@@ -34,7 +38,9 @@ interface DataSourceModalProps {
     sourceType: 'google-sheets' | 'excel' | 'initial',
     sourceName: string,
     spreadsheetId?: string,
-    sheetName?: string
+    sheetName?: string,
+    targetDate?: string,
+    multiDayRecords?: Record<string, EmployeeRecord[]>
   ) => void;
   activeSource: {
     type: 'google-sheets' | 'excel' | 'initial';
@@ -42,6 +48,7 @@ interface DataSourceModalProps {
     spreadsheetId?: string;
     sheetName?: string;
   };
+  currentSelectedDate: string;
 }
 
 export const DataSourceModal: React.FC<DataSourceModalProps> = ({
@@ -52,8 +59,9 @@ export const DataSourceModal: React.FC<DataSourceModalProps> = ({
   onGoogleSignIn,
   onApplyNewData,
   activeSource,
+  currentSelectedDate,
 }) => {
-  const [activeTab, setActiveTab] = useState<'sheets' | 'excel'>('sheets');
+  const [activeTab, setActiveTab] = useState<'sheets' | 'excel'>('excel');
   const [sheetUrlOrId, setSheetUrlOrId] = useState(activeSource.spreadsheetId || '');
   const [driveFiles, setDriveFiles] = useState<DriveSpreadsheetFile[]>([]);
   const [isLoadingFiles, setIsLoadingFiles] = useState(false);
@@ -63,12 +71,29 @@ export const DataSourceModal: React.FC<DataSourceModalProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
+  // Excel parsed preview state
+  const [parsedResult, setParsedResult] = useState<ExcelParseResult | null>(null);
+  const [uploadedFileName, setUploadedFileName] = useState<string>('');
+  const [targetDateInput, setTargetDateInput] = useState<string>(currentSelectedDate);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
+
   // Fetch Drive spreadsheets when modal opens and user has token
   useEffect(() => {
     if (isOpen && accessToken && activeTab === 'sheets') {
       loadDriveFiles();
     }
   }, [isOpen, accessToken, activeTab]);
+
+  // Reset file preview when modal closes
+  useEffect(() => {
+    if (!isOpen) {
+      setParsedResult(null);
+      setErrorMsg(null);
+      setSuccessMsg(null);
+    } else {
+      setTargetDateInput(currentSelectedDate);
+    }
+  }, [isOpen, currentSelectedDate]);
 
   const loadDriveFiles = async () => {
     if (!accessToken) return;
@@ -116,7 +141,6 @@ export const DataSourceModal: React.FC<DataSourceModalProps> = ({
     setIsConnecting(true);
     setErrorMsg(null);
     try {
-      // Fetch details first if tabs not loaded yet
       let tabName = selectedSheetTab;
       let sheetTitle = 'Google Spreadsheet';
 
@@ -131,19 +155,47 @@ export const DataSourceModal: React.FC<DataSourceModalProps> = ({
 
       // Fetch rows
       const rawRows = await fetchSpreadsheetRange(rawId, tabName, accessToken);
-      const employees = parseRowsToEmployees(rawRows);
+      const parsed = parseComprehensiveAttendance(rawRows, {
+        fallbackDate: currentSelectedDate,
+        fileName: sheetTitle,
+      });
 
-      if (employees.length === 0) {
+      if (parsed.totalEmployees === 0) {
         throw new Error(
           'Tidak ditemukan baris data karyawan di sheet ini. Pastikan format kolom sesuai (Employee ID, Name, Department, dll).'
         );
       }
 
-      onApplyNewData(employees, 'google-sheets', sheetTitle, rawId, tabName);
-      setSuccessMsg(`Berhasil menghubungkan ${employees.length} baris data dari Google Sheets!`);
+      if (parsed.totalDays > 1) {
+        onApplyNewData(
+          parsed.primaryEmployees,
+          'google-sheets',
+          sheetTitle,
+          rawId,
+          tabName,
+          parsed.primaryDate,
+          parsed.dailyRecords
+        );
+        setSuccessMsg(
+          `Berhasil menyimpan ${parsed.totalDays} hari data presensi dari Google Sheets ke Firebase!`
+        );
+      } else {
+        onApplyNewData(
+          parsed.primaryEmployees,
+          'google-sheets',
+          sheetTitle,
+          rawId,
+          tabName,
+          parsed.primaryDate
+        );
+        setSuccessMsg(
+          `Berhasil menyimpan ${parsed.primaryEmployees.length} baris data presensi tanggal ${parsed.primaryDate} ke Firebase!`
+        );
+      }
+
       setTimeout(() => {
         onClose();
-      }, 900);
+      }, 1000);
     } catch (err: any) {
       setErrorMsg(err.message || 'Gagal memuat data dari Google Sheets');
     } finally {
@@ -151,24 +203,74 @@ export const DataSourceModal: React.FC<DataSourceModalProps> = ({
     }
   };
 
-  // Handle Excel upload
+  // Handle Excel upload with preview step
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setErrorMsg(null);
+    setSuccessMsg(null);
     try {
-      const result = await parseExcelFile(file);
-      if (result.employees.length === 0) {
-        throw new Error('Tidak ada data karyawan yang terbaca dari file Excel ini.');
+      const result = await parseExcelFile(file, { fallbackDate: currentSelectedDate });
+      if (result.totalEmployees === 0 && result.totalDays === 0) {
+        throw new Error('Tidak ada data karyawan yang berhasil terbaca dari file Excel ini. Periksa kembali struktur tabel.');
       }
-      onApplyNewData(result.employees, 'excel', file.name);
-      setSuccessMsg(`Berhasil mengimpor ${result.employees.length} baris data dari "${file.name}"!`);
-      setTimeout(() => {
-        onClose();
-      }, 900);
+      setUploadedFileName(file.name);
+      setParsedResult(result);
+      setTargetDateInput(result.primaryDate);
     } catch (err: any) {
       setErrorMsg(err.message || 'Gagal membaca file Excel.');
+      setParsedResult(null);
+    }
+  };
+
+  // Commit Excel Single Day to Firebase
+  const handleConfirmSingleDaySave = async () => {
+    if (!parsedResult) return;
+    setIsSaving(true);
+    try {
+      const empsToSave = parsedResult.dailyRecords[targetDateInput] || parsedResult.primaryEmployees;
+      await onApplyNewData(
+        empsToSave,
+        'excel',
+        uploadedFileName,
+        undefined,
+        undefined,
+        targetDateInput
+      );
+      setSuccessMsg(`Data tanggal ${targetDateInput} (${empsToSave.length} karyawan) tersimpan di Firebase.`);
+      setTimeout(() => {
+        onClose();
+      }, 800);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Gagal menyimpan ke Firebase.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Commit Excel All Days (Batch) to Firebase
+  const handleConfirmMultiDaySave = async () => {
+    if (!parsedResult || !parsedResult.dailyRecords) return;
+    setIsSaving(true);
+    try {
+      await onApplyNewData(
+        parsedResult.primaryEmployees,
+        'excel',
+        uploadedFileName,
+        undefined,
+        undefined,
+        parsedResult.primaryDate,
+        parsedResult.dailyRecords
+      );
+      setSuccessMsg(`Berhasil menyimpan seluruh ${parsedResult.totalDays} hari data ke Firebase.`);
+      setTimeout(() => {
+        onClose();
+      }, 800);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Gagal menyimpan data multi-hari ke Firebase.');
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -180,7 +282,7 @@ export const DataSourceModal: React.FC<DataSourceModalProps> = ({
         {/* Header */}
         <div className="p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/80 dark:bg-slate-800/60">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-teal-500/10 text-teal-600 dark:text-teal-400 flex items-center justify-center">
+            <div className="w-9 h-9 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
               <FileSpreadsheet className="w-5 h-5" />
             </div>
             <div>
@@ -188,7 +290,7 @@ export const DataSourceModal: React.FC<DataSourceModalProps> = ({
                 Kelola Sumber Data Presensi
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Pilih Google Sheets dengan auto-update atau upload file Excel
+                Simpan presensi harian langsung ke Cloud Firestore Firebase
               </p>
             </div>
           </div>
@@ -204,31 +306,31 @@ export const DataSourceModal: React.FC<DataSourceModalProps> = ({
         <div className="flex border-b border-slate-200 dark:border-slate-800 px-5 bg-slate-50/40 dark:bg-slate-800/30">
           <button
             onClick={() => {
-              setActiveTab('sheets');
-              setErrorMsg(null);
-            }}
-            className={`py-3 px-4 text-xs font-bold border-b-2 transition flex items-center gap-2 ${
-              activeTab === 'sheets'
-                ? 'border-teal-500 text-teal-600 dark:text-teal-400'
-                : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
-            }`}
-          >
-            <LinkIcon className="w-3.5 h-3.5" />
-            <span>Google Sheets (Live Sync)</span>
-          </button>
-          <button
-            onClick={() => {
               setActiveTab('excel');
               setErrorMsg(null);
             }}
             className={`py-3 px-4 text-xs font-bold border-b-2 transition flex items-center gap-2 ${
               activeTab === 'excel'
-                ? 'border-teal-500 text-teal-600 dark:text-teal-400'
+                ? 'border-emerald-600 text-emerald-600 dark:text-emerald-400'
                 : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
             }`}
           >
             <Upload className="w-3.5 h-3.5" />
-            <span>Upload File Excel (.xlsx)</span>
+            <span>Upload File Excel (.xlsx / .csv)</span>
+          </button>
+          <button
+            onClick={() => {
+              setActiveTab('sheets');
+              setErrorMsg(null);
+            }}
+            className={`py-3 px-4 text-xs font-bold border-b-2 transition flex items-center gap-2 ${
+              activeTab === 'sheets'
+                ? 'border-emerald-600 text-emerald-600 dark:text-emerald-400'
+                : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+            }`}
+          >
+            <LinkIcon className="w-3.5 h-3.5" />
+            <span>Google Sheets (Live Sync)</span>
           </button>
         </div>
 
@@ -248,11 +350,186 @@ export const DataSourceModal: React.FC<DataSourceModalProps> = ({
             </div>
           )}
 
-          {activeTab === 'sheets' ? (
+          {activeTab === 'excel' ? (
+            <div className="space-y-4">
+              {!parsedResult ? (
+                <>
+                  {/* Excel Drag & Drop Upload */}
+                  <div className="border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-2xl p-6 text-center hover:border-emerald-500 dark:hover:border-emerald-400 transition bg-slate-50/50 dark:bg-slate-800/30">
+                    <input
+                      type="file"
+                      id="excel-file-input"
+                      accept=".xlsx, .xls, .csv"
+                      onChange={handleFileUpload}
+                      className="hidden"
+                    />
+                    <label
+                      htmlFor="excel-file-input"
+                      className="cursor-pointer flex flex-col items-center justify-center space-y-2"
+                    >
+                      <div className="w-12 h-12 rounded-full bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shadow-xs">
+                        <Upload className="w-6 h-6" />
+                      </div>
+                      <div className="font-bold text-sm text-slate-800 dark:text-slate-200">
+                        Klik untuk Pilih File Excel (.xlsx / .csv)
+                      </div>
+                      <p className="text-xs text-slate-400 max-w-sm">
+                        Mendukung presensi harian tunggal maupun file rekap satu bulan penuh (kolom tanggal 1 s/d 31).
+                      </p>
+                    </label>
+                  </div>
+
+                  {/* Download Template helper */}
+                  <div className="flex items-center justify-between p-4 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700">
+                    <div>
+                      <h5 className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                        Belum punya template Excel?
+                      </h5>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        Unduh template resmi berformat sesuai tabel presensi harian karyawan.
+                      </p>
+                    </div>
+                    <button
+                      onClick={downloadSampleExcelTemplate}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white dark:bg-slate-800 text-emerald-600 dark:text-emerald-400 border border-slate-300 dark:border-slate-600 hover:bg-slate-50 transition"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>Unduh Template</span>
+                    </button>
+                  </div>
+                </>
+              ) : (
+                /* Parsed Excel Review & Confirmation Card */
+                <div className="bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl p-5 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-lg bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
+                        <FileSpreadsheet className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <div className="text-xs font-bold text-slate-900 dark:text-white truncate max-w-xs">
+                          {uploadedFileName}
+                        </div>
+                        <span className="text-[11px] text-slate-400">
+                          Sheet: {parsedResult.activeSheet}
+                        </span>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setParsedResult(null)}
+                      className="text-xs text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 underline"
+                    >
+                      Ganti File
+                    </button>
+                  </div>
+
+                  {/* Multi-Day Detected Case */}
+                  {parsedResult.totalDays > 1 ? (
+                    <div className="space-y-3">
+                      <div className="p-3.5 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/60">
+                        <div className="flex items-center gap-2 text-emerald-800 dark:text-emerald-300 font-bold text-xs">
+                          <Layers className="w-4 h-4 text-emerald-600" />
+                          <span>Format Multi-Hari Terdeteksi: {parsedResult.totalDays} Hari Presensi Ditemukan</span>
+                        </div>
+                        <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-1">
+                          File ini mencakup data presensi dari <strong>{parsedResult.detectedDates[0]}</strong> sampai <strong>{parsedResult.detectedDates[parsedResult.detectedDates.length - 1]}</strong> dengan rata-rata {parsedResult.totalEmployees} karyawan per hari.
+                        </p>
+                      </div>
+
+                      {/* Detected Dates Chips */}
+                      <div>
+                        <span className="text-xs font-semibold text-slate-700 dark:text-slate-300 block mb-1.5">
+                          Daftar Tanggal yang Terbaca:
+                        </span>
+                        <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto p-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-[11px]">
+                          {parsedResult.detectedDates.map((d) => (
+                            <span
+                              key={d}
+                              className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-mono"
+                            >
+                              {d} ({parsedResult.dailyRecords[d]?.length || 0} org)
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Primary Batch Save Button */}
+                      <button
+                        onClick={handleConfirmMultiDaySave}
+                        disabled={isSaving}
+                        className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-sm transition flex items-center justify-center gap-2 disabled:opacity-50"
+                      >
+                        {isSaving ? (
+                          <>
+                            <RefreshCw className="w-4 h-4 animate-spin" />
+                            <span>Menyimpan Seluruh {parsedResult.totalDays} Hari ke Firebase...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Check className="w-4 h-4" />
+                            <span>Simpan Semua ({parsedResult.totalDays} Hari) ke Firebase</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  ) : (
+                    /* Single Day Detected Case */
+                    <div className="space-y-3.5">
+                      <div className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300">
+                        <Users className="w-4 h-4 text-emerald-600" />
+                        <span>
+                          Ditemukan <strong>{parsedResult.totalEmployees} Karyawan</strong> dalam data ini.
+                        </span>
+                      </div>
+
+                      {/* Target Date Picker */}
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                          Simpan Sebagai Presensi Tanggal:
+                        </label>
+                        <div className="flex items-center gap-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2">
+                          <Calendar className="w-4 h-4 text-emerald-600 shrink-0" />
+                          <input
+                            type="date"
+                            value={targetDateInput}
+                            onChange={(e) => setTargetDateInput(e.target.value)}
+                            className="bg-transparent text-xs text-slate-800 dark:text-slate-200 outline-none w-full font-medium"
+                          />
+                        </div>
+                        <span className="text-[10px] text-slate-400 mt-1 block">
+                          Tanggal di atas terdeteksi otomatis dari file, Anda dapat mengubahnya jika diperlukan sebelum disimpan.
+                        </span>
+                      </div>
+
+                      {/* Single Day Save Button */}
+                      <button
+                        onClick={handleConfirmSingleDaySave}
+                        disabled={isSaving || !targetDateInput}
+                        className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-sm transition flex items-center justify-center gap-2 disabled:opacity-50"
+                      >
+                        {isSaving ? (
+                          <>
+                            <RefreshCw className="w-4 h-4 animate-spin" />
+                            <span>Menyimpan ke Firebase...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Check className="w-4 h-4" />
+                            <span>Simpan Presensi Tanggal {targetDateInput} ke Firebase</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          ) : (
+            /* Google Sheets Tab */
             <div className="space-y-4">
               {!user ? (
                 <div className="p-5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-center space-y-3">
-                  <div className="w-10 h-10 rounded-full bg-teal-50 dark:bg-teal-950 text-teal-600 mx-auto flex items-center justify-center">
+                  <div className="w-10 h-10 rounded-full bg-emerald-50 dark:bg-emerald-950 text-emerald-600 mx-auto flex items-center justify-center">
                     <FileSpreadsheet className="w-5 h-5" />
                   </div>
                   <div>
@@ -282,7 +559,7 @@ export const DataSourceModal: React.FC<DataSourceModalProps> = ({
                         placeholder="https://docs.google.com/spreadsheets/d/1BxiMVs0X.../edit"
                         value={sheetUrlOrId}
                         onChange={(e) => setSheetUrlOrId(e.target.value)}
-                        className="flex-1 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-800 dark:text-slate-200 outline-none focus:border-teal-500 font-mono"
+                        className="flex-1 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-800 dark:text-slate-200 outline-none focus:border-emerald-500 font-mono"
                       />
                       <button
                         onClick={() => handleSelectFile(extractSpreadsheetIdFromUrl(sheetUrlOrId))}
@@ -322,7 +599,7 @@ export const DataSourceModal: React.FC<DataSourceModalProps> = ({
                       <button
                         onClick={loadDriveFiles}
                         disabled={isLoadingFiles}
-                        className="text-[11px] text-teal-600 dark:text-teal-400 hover:underline flex items-center gap-1"
+                        className="text-[11px] text-emerald-600 dark:text-emerald-400 hover:underline flex items-center gap-1"
                       >
                         <RefreshCw className={`w-3 h-3 ${isLoadingFiles ? 'animate-spin' : ''}`} />
                         <span>Refresh List</span>
@@ -341,7 +618,7 @@ export const DataSourceModal: React.FC<DataSourceModalProps> = ({
                             onClick={() => handleSelectFile(file.id)}
                             className={`w-full p-2.5 text-left text-xs flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-800 transition ${
                               sheetUrlOrId === file.id
-                                ? 'bg-teal-50/70 dark:bg-teal-950/40 text-teal-700 dark:text-teal-300 font-semibold'
+                                ? 'bg-emerald-50/70 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 font-semibold'
                                 : 'text-slate-700 dark:text-slate-300'
                             }`}
                           >
@@ -362,7 +639,7 @@ export const DataSourceModal: React.FC<DataSourceModalProps> = ({
                     <button
                       onClick={handleConnectSheet}
                       disabled={isConnecting || !sheetUrlOrId}
-                      className="w-full py-2.5 bg-teal-600 hover:bg-teal-500 text-white rounded-xl text-xs font-bold shadow-sm transition flex items-center justify-center gap-2 disabled:opacity-50"
+                      className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-sm transition flex items-center justify-center gap-2 disabled:opacity-50"
                     >
                       {isConnecting ? (
                         <>
@@ -379,52 +656,6 @@ export const DataSourceModal: React.FC<DataSourceModalProps> = ({
                   </div>
                 </div>
               )}
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {/* Excel Drag & Drop Upload */}
-              <div className="border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-2xl p-6 text-center hover:border-teal-500 dark:hover:border-teal-400 transition bg-slate-50/50 dark:bg-slate-800/30">
-                <input
-                  type="file"
-                  id="excel-file-input"
-                  accept=".xlsx, .xls, .csv"
-                  onChange={handleFileUpload}
-                  className="hidden"
-                />
-                <label
-                  htmlFor="excel-file-input"
-                  className="cursor-pointer flex flex-col items-center justify-center space-y-2"
-                >
-                  <div className="w-12 h-12 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shadow-xs">
-                    <Upload className="w-6 h-6" />
-                  </div>
-                  <div className="font-bold text-sm text-slate-800 dark:text-slate-200">
-                    Klik untuk Pilih File Excel (.xlsx / .csv)
-                  </div>
-                  <p className="text-xs text-slate-400 max-w-sm">
-                    Mendukung format file persis seperti pada gambar (kolom NO, Employee ID, Name, Department, Branch, Job Position, Job Level, Join Date, Employment Status, Tanggal, Keterangan).
-                  </p>
-                </label>
-              </div>
-
-              {/* Download Template helper */}
-              <div className="flex items-center justify-between p-4 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700">
-                <div>
-                  <h5 className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                    Belum punya file Excel?
-                  </h5>
-                  <p className="text-[11px] text-slate-400 mt-0.5">
-                    Unduh template resmi berformat sesuai tabel pada gambar.
-                  </p>
-                </div>
-                <button
-                  onClick={downloadSampleExcelTemplate}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white dark:bg-slate-800 text-teal-600 dark:text-teal-400 border border-slate-300 dark:border-slate-600 hover:bg-slate-50 transition"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>Unduh Template</span>
-                </button>
-              </div>
             </div>
           )}
         </div>

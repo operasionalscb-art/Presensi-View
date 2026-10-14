@@ -88,10 +88,10 @@ export async function saveDayToFirestore(
   employees: EmployeeRecord[],
   sourceName: string = 'Upload Excel'
 ): Promise<void> {
-  const d = new Date(dateStr);
-  const day = d.getDate();
-  const month = d.getMonth() + 1;
-  const year = d.getFullYear();
+  const parts = dateStr.split('-');
+  const year = parts.length === 3 ? parseInt(parts[0], 10) : new Date(dateStr).getFullYear();
+  const month = parts.length === 3 ? parseInt(parts[1], 10) : new Date(dateStr).getMonth() + 1;
+  const day = parts.length === 3 ? parseInt(parts[2], 10) : new Date(dateStr).getDate();
 
   const recordPayload: StoredDayRecord = {
     date: dateStr,
@@ -105,7 +105,7 @@ export async function saveDayToFirestore(
     // Clean and normalize objects before saving to Firestore
     employees: employees.map((e, index) => ({
       no: e.no || index + 1,
-      employeeId: String(e.employeeId || '').trim(),
+      employeeId: String(e.employeeId || `EMP-${index + 1}`).trim(),
       name: String(e.name || '').trim(),
       department: String(e.department || 'Umum').trim(),
       branch: String(e.branch || 'Pusat').trim(),
@@ -126,6 +126,26 @@ export async function saveDayToFirestore(
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, docPath);
   }
+}
+
+/**
+ * Save multiple daily attendance records to Cloud Firestore (e.g. from a monthly spreadsheet or multi-date upload)
+ */
+export async function saveMultipleDaysToFirestore(
+  records: Record<string, { employees: EmployeeRecord[]; sourceName?: string }>
+): Promise<string[]> {
+  const dates = Object.keys(records);
+  const savedDates: string[] = [];
+
+  for (const dateStr of dates) {
+    const entry = records[dateStr];
+    if (entry && entry.employees && entry.employees.length > 0) {
+      await saveDayToFirestore(dateStr, entry.employees, entry.sourceName || 'Upload Excel');
+      savedDates.push(dateStr);
+    }
+  }
+
+  return savedDates;
 }
 
 /**

@@ -228,7 +228,7 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
                 onClick={() => handleStatusChange('I')}
                 className={`py-1.5 px-2 rounded-lg text-xs font-semibold border text-center transition ${
                   statusCode === 'I'
-                    ? 'bg-blue-600 text-white border-blue-600'
+                    ? 'bg-sky-600 text-white border-sky-600'
                     : 'bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700'
                 }`}
               >

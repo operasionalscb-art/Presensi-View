@@ -1,27 +1,46 @@
 import * as XLSX from 'xlsx';
-import { parseRowsToEmployees } from './dataParser';
+import { parseComprehensiveAttendance, ParsedAttendanceResult } from './dataParser';
 import { EmployeeRecord } from '../types/attendance';
 
-export async function parseExcelFile(file: File): Promise<{
+export interface ExcelParseResult extends ParsedAttendanceResult {
   sheetNames: string[];
-  employees: EmployeeRecord[];
+  activeSheet: string;
+  employees: EmployeeRecord[]; // Alias for primaryEmployees for backwards compatibility
   rawRows: any[][];
-}> {
+}
+
+export async function parseExcelFile(
+  file: File,
+  options?: {
+    sheetName?: string;
+    fallbackDate?: string;
+  }
+): Promise<ExcelParseResult> {
   const buffer = await file.arrayBuffer();
-  const workbook = XLSX.read(buffer, { type: 'array' });
+  const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
   const sheetNames = workbook.SheetNames;
 
   if (sheetNames.length === 0) {
     throw new Error('File excel tidak memiliki sheet.');
   }
 
-  const firstSheet = workbook.Sheets[sheetNames[0]];
-  const rawRows = XLSX.utils.sheet_to_json(firstSheet, { header: 1 }) as any[][];
-  const employees = parseRowsToEmployees(rawRows);
+  const targetSheetName = options?.sheetName && sheetNames.includes(options.sheetName)
+    ? options.sheetName
+    : sheetNames[0];
+
+  const sheet = workbook.Sheets[targetSheetName];
+  const rawRows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false }) as any[][];
+
+  const parsed = parseComprehensiveAttendance(rawRows, {
+    fallbackDate: options?.fallbackDate,
+    fileName: file.name,
+  });
 
   return {
+    ...parsed,
     sheetNames,
-    employees,
+    activeSheet: targetSheetName,
+    employees: parsed.primaryEmployees,
     rawRows,
   };
 }

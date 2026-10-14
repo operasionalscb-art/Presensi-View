@@ -52,42 +52,42 @@ export const AbsenceAndLateLists: React.FC<AbsenceAndLateListsProps> = ({ employ
     switch (status) {
       case 'telat':
         return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
-            <Clock className="w-3 h-3" />
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800">
+            <Clock className="w-3 h-3 text-amber-500" />
             <span>Telat {lateMin ? `(${lateMin} mnt)` : ''}</span>
           </span>
         );
       case 'izin':
         return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300">
-            <FileText className="w-3 h-3" />
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-sky-50 text-sky-700 border border-sky-200 dark:bg-sky-950/40 dark:text-sky-300 dark:border-sky-800">
+            <FileText className="w-3 h-3 text-sky-500" />
             <span>Izin</span>
           </span>
         );
       case 'sakit':
         return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-300">
-            <HeartPulse className="w-3 h-3" />
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800">
+            <HeartPulse className="w-3 h-3 text-rose-500" />
             <span>Sakit</span>
           </span>
         );
       case 'cuti':
         return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300">
-            <CalendarCheck className="w-3 h-3" />
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-purple-50 text-purple-700 border border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800">
+            <CalendarCheck className="w-3 h-3 text-purple-500" />
             <span>Cuti</span>
           </span>
         );
       case 'alpha':
         return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300">
-            <ShieldAlert className="w-3 h-3" />
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-red-50 text-red-700 border border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800">
+            <ShieldAlert className="w-3 h-3 text-red-500" />
             <span>Alpha</span>
           </span>
         );
       default:
         return (
-          <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-700">
+          <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300">
             Lainnya
           </span>
         );
@@ -127,7 +127,7 @@ export const AbsenceAndLateLists: React.FC<AbsenceAndLateListsProps> = ({ employ
           className={`py-2 px-3 font-semibold border-b-2 transition ${
             activeTab === 'all'
               ? 'border-emerald-600 text-emerald-600 dark:text-emerald-400'
-              : 'border-transparent text-slate-500 hover:text-slate-800'
+              : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
           }`}
         >
           Semua ({counts.all})
@@ -137,7 +137,7 @@ export const AbsenceAndLateLists: React.FC<AbsenceAndLateListsProps> = ({ employ
           className={`py-2 px-3 font-semibold border-b-2 transition ${
             activeTab === 'telat'
               ? 'border-amber-600 text-amber-600 dark:text-amber-400'
-              : 'border-transparent text-slate-500 hover:text-slate-800'
+              : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
           }`}
         >
           Telat ({counts.telat})
@@ -146,8 +146,8 @@ export const AbsenceAndLateLists: React.FC<AbsenceAndLateListsProps> = ({ employ
           onClick={() => setActiveTab('izin')}
           className={`py-2 px-3 font-semibold border-b-2 transition ${
             activeTab === 'izin'
-              ? 'border-blue-600 text-blue-600 dark:text-blue-400'
-              : 'border-transparent text-slate-500 hover:text-slate-800'
+              ? 'border-sky-600 text-sky-600 dark:text-sky-400'
+              : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
           }`}
         >
           Izin ({counts.izin})
@@ -157,7 +157,7 @@ export const AbsenceAndLateLists: React.FC<AbsenceAndLateListsProps> = ({ employ
           className={`py-2 px-3 font-semibold border-b-2 transition ${
             activeTab === 'sakit'
               ? 'border-rose-600 text-rose-600 dark:text-rose-400'
-              : 'border-transparent text-slate-500 hover:text-slate-800'
+              : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
           }`}
         >
           Sakit ({counts.sakit})
@@ -167,7 +167,7 @@ export const AbsenceAndLateLists: React.FC<AbsenceAndLateListsProps> = ({ employ
           className={`py-2 px-3 font-semibold border-b-2 transition ${
             activeTab === 'cuti'
               ? 'border-purple-600 text-purple-600 dark:text-purple-400'
-              : 'border-transparent text-slate-500 hover:text-slate-800'
+              : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
           }`}
         >
           Cuti ({counts.cuti})
