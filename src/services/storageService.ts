@@ -1,5 +1,13 @@
+import {
+  collection,
+  doc,
+  setDoc,
+  deleteDoc,
+  onSnapshot,
+  getDocs,
+} from 'firebase/firestore';
+import { db, handleFirestoreError, OperationType } from './firebaseAuth';
 import { EmployeeRecord } from '../types/attendance';
-import { INITIAL_EMPLOYEES } from '../data/initialData';
 
 export interface StoredDayRecord {
   date: string; // "YYYY-MM-DD"
@@ -8,6 +16,8 @@ export interface StoredDayRecord {
   year: number;
   sourceName: string;
   uploadedAt: string;
+  updatedAt?: string;
+  totalEmployees: number;
   employees: EmployeeRecord[];
 }
 
@@ -63,69 +73,129 @@ export interface YearReport {
   topFrequentAbsenceEmployees: EmployeeAccumulation[];
 }
 
-const STORAGE_KEY = 'PRESENSI_EMPLOYEE_HISTORY_DB_V1';
+const COLLECTION_NAME = 'daily_records';
 
 const MONTH_NAMES = [
   'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
   'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
 ];
 
-export function loadAllHistory(): Record<string, StoredDayRecord> {
+/**
+ * Save or overwrite a daily attendance record in Cloud Firestore
+ */
+export async function saveDayToFirestore(
+  dateStr: string,
+  employees: EmployeeRecord[],
+  sourceName: string = 'Upload Excel'
+): Promise<void> {
+  const d = new Date(dateStr);
+  const day = d.getDate();
+  const month = d.getMonth() + 1;
+  const year = d.getFullYear();
+
+  const recordPayload: StoredDayRecord = {
+    date: dateStr,
+    day,
+    month,
+    year,
+    sourceName,
+    uploadedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    totalEmployees: employees.length,
+    // Clean and normalize objects before saving to Firestore
+    employees: employees.map((e, index) => ({
+      no: e.no || index + 1,
+      employeeId: String(e.employeeId || '').trim(),
+      name: String(e.name || '').trim(),
+      department: String(e.department || 'Umum').trim(),
+      branch: String(e.branch || 'Pusat').trim(),
+      jobPosition: String(e.jobPosition || 'Staff').trim(),
+      jobLevel: String(e.jobLevel || 'Staff').trim(),
+      joinDate: String(e.joinDate || '-').trim(),
+      employmentStatus: String(e.employmentStatus || 'Contract').trim(),
+      rawStatus: String(e.rawStatus || '').trim(),
+      normalizedStatus: e.normalizedStatus,
+      keterangan: String(e.keterangan || '').trim(),
+      lateMinutes: e.lateMinutes || 0,
+    })),
+  };
+
+  const docPath = `${COLLECTION_NAME}/${dateStr}`;
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      return seedHistory();
-    }
-    const parsed = JSON.parse(raw);
-    if (!parsed || Object.keys(parsed).length === 0) {
-      return seedHistory();
-    }
-    return parsed;
-  } catch (e) {
-    console.warn('Failed to load history from storage:', e);
-    return seedHistory();
+    await setDoc(doc(db, COLLECTION_NAME, dateStr), recordPayload);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, docPath);
   }
 }
 
-export function saveDayHistory(dateStr: string, employees: EmployeeRecord[], sourceName: string = 'Upload Excel'): void {
+/**
+ * Delete a daily record from Firestore
+ */
+export async function deleteDayFromFirestore(dateStr: string): Promise<void> {
+  const docPath = `${COLLECTION_NAME}/${dateStr}`;
   try {
-    const history = loadAllHistory();
-    const d = new Date(dateStr);
-    const day = d.getDate();
-    const month = d.getMonth() + 1;
-    const year = d.getFullYear();
-
-    history[dateStr] = {
-      date: dateStr,
-      day,
-      month,
-      year,
-      sourceName,
-      uploadedAt: new Date().toISOString(),
-      employees,
-    };
-
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
-  } catch (e) {
-    console.error('Failed to save history to localStorage:', e);
+    await deleteDoc(doc(db, COLLECTION_NAME, dateStr));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, docPath);
   }
 }
 
-export function getHistoryForDate(dateStr: string): EmployeeRecord[] | null {
-  const history = loadAllHistory();
-  return history[dateStr]?.employees || null;
+/**
+ * Real-time listener for all daily attendance archives in Firestore
+ */
+export function subscribeDailyRecords(
+  onUpdate: (records: Record<string, StoredDayRecord>) => void,
+  onError?: (err: Error) => void
+): () => void {
+  const collectionRef = collection(db, COLLECTION_NAME);
+
+  return onSnapshot(
+    collectionRef,
+    (snapshot) => {
+      const recordsMap: Record<string, StoredDayRecord> = {};
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data() as StoredDayRecord;
+        if (data && data.date) {
+          recordsMap[data.date] = data;
+        }
+      });
+      onUpdate(recordsMap);
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.GET, COLLECTION_NAME);
+      if (onError) onError(error);
+    }
+  );
 }
 
-export function getStoredDatesList(): string[] {
-  const history = loadAllHistory();
-  return Object.keys(history).sort().reverse();
+/**
+ * Fetch all records once from Firestore
+ */
+export async function fetchAllDailyRecords(): Promise<Record<string, StoredDayRecord>> {
+  try {
+    const querySnapshot = await getDocs(collection(db, COLLECTION_NAME));
+    const recordsMap: Record<string, StoredDayRecord> = {};
+    querySnapshot.forEach((docSnap) => {
+      const data = docSnap.data() as StoredDayRecord;
+      if (data && data.date) {
+        recordsMap[data.date] = data;
+      }
+    });
+    return recordsMap;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, COLLECTION_NAME);
+    return {};
+  }
 }
 
-// Calculate Monthly Summary
-export function calculateMonthlyReport(year: number, month: number): MonthReport {
-  const history = loadAllHistory();
+// Calculate Monthly Summary from genuine stored Firestore records
+export function calculateMonthlyReport(
+  history: Record<string, StoredDayRecord>,
+  year: number,
+  month: number
+): MonthReport {
   const dayRecords = Object.values(history).filter(
-    (item) => item.year === year && item.month === month
+    (item) => item.year === year && item.month === month && item.employees && item.employees.length > 0
   );
 
   const empMap = new Map<string, EmployeeAccumulation>();
@@ -221,10 +291,14 @@ export function calculateMonthlyReport(year: number, month: number): MonthReport
   };
 }
 
-// Calculate Yearly Summary
-export function calculateYearlyReport(year: number): YearReport {
-  const history = loadAllHistory();
-  const yearRecords = Object.values(history).filter((item) => item.year === year);
+// Calculate Yearly Summary from genuine stored Firestore records
+export function calculateYearlyReport(
+  history: Record<string, StoredDayRecord>,
+  year: number
+): YearReport {
+  const yearRecords = Object.values(history).filter(
+    (item) => item.year === year && item.employees && item.employees.length > 0
+  );
 
   const monthlyStats = [];
   let totalTelatYear = 0;
@@ -242,7 +316,7 @@ export function calculateYearlyReport(year: number): YearReport {
         month: m,
         monthName: MONTH_NAMES[m - 1],
         daysCount: 0,
-        avgRate: m <= 10 ? 92.5 : 0, // Fallback baseline for prior months
+        avgRate: 0,
         totalTelat: 0,
         totalAbsen: 0,
       });
@@ -335,7 +409,7 @@ export function calculateYearlyReport(year: number): YearReport {
     .filter((e) => e.totalIzin + e.totalSakit + e.totalCuti + e.totalAlpha > 0)
     .sort((a, b) => (b.totalIzin + b.totalSakit + b.totalCuti + b.totalAlpha) - (a.totalIzin + a.totalSakit + a.totalCuti + a.totalAlpha));
 
-  const overallRate = activeMonthCount > 0 ? Math.round((sumRates / activeMonthCount) * 10) / 10 : 92.5;
+  const overallRate = activeMonthCount > 0 ? Math.round((sumRates / activeMonthCount) * 10) / 10 : 0;
 
   return {
     year,
@@ -349,77 +423,4 @@ export function calculateYearlyReport(year: number): YearReport {
     totalAlphaYear,
     topFrequentAbsenceEmployees,
   };
-}
-
-// Seed historical October dates so the monthly/yearly calculations are pre-populated and functional immediately!
-function seedHistory(): Record<string, StoredDayRecord> {
-  const history: Record<string, StoredDayRecord> = {};
-  const currentDay = 12;
-
-  // Add Day 12 with exact INITIAL_EMPLOYEES
-  history['2026-10-12'] = {
-    date: '2026-10-12',
-    day: 12,
-    month: 10,
-    year: 2026,
-    sourceName: 'Format Gambar (Hari Ini)',
-    uploadedAt: new Date('2026-10-12T07:30:00').toISOString(),
-    employees: INITIAL_EMPLOYEES,
-  };
-
-  // Seed working days from Day 1 to 11 (excluding weekends Oct 3, 4, 10, 11)
-  const workdays = [1, 2, 5, 6, 7, 8, 9];
-  workdays.forEach((d) => {
-    const dateStr = `2026-10-${String(d).padStart(2, '0')}`;
-    const modifiedEmps: EmployeeRecord[] = INITIAL_EMPLOYEES.map((base, idx) => {
-      // Simulate realistic daily variations per employee
-      if (idx === 0) {
-        // Siswadi Dinianto (usually punctual, occasionally late)
-        return d % 3 === 0
-          ? { ...base, rawStatus: 'H/LI/NCO', normalizedStatus: 'telat', keterangan: 'Telat 15 menit', lateMinutes: 15 }
-          : { ...base, rawStatus: 'H', normalizedStatus: 'hadir', keterangan: '', lateMinutes: 0 };
-      }
-      if (idx === 3) {
-        // Sihabudin
-        return d % 4 === 0
-          ? { ...base, rawStatus: 'H/LI/NCO', normalizedStatus: 'telat', keterangan: 'Telat 10 menit', lateMinutes: 10 }
-          : { ...base, rawStatus: 'H', normalizedStatus: 'hadir', keterangan: '', lateMinutes: 0 };
-      }
-      if (idx === 7) {
-        // Dewi Sartika (Sakit from day 10, before was Hadir)
-        return d >= 10
-          ? { ...base, rawStatus: 'S', normalizedStatus: 'sakit', keterangan: 'Sakit tifus (surat dokter)' }
-          : { ...base, rawStatus: 'H', normalizedStatus: 'hadir', keterangan: '' };
-      }
-      if (idx === 8) {
-        // Bambang Tri Atmojo (Izin on day 12 only)
-        return { ...base, rawStatus: 'H', normalizedStatus: 'hadir', keterangan: '' };
-      }
-      if (idx === 9) {
-        // Nur Aisyah (Cuti on day 11-12)
-        return d >= 11
-          ? { ...base, rawStatus: 'C', normalizedStatus: 'cuti', keterangan: 'Cuti tahunan' }
-          : { ...base, rawStatus: 'H', normalizedStatus: 'hadir', keterangan: '' };
-      }
-      return { ...base, rawStatus: 'H', normalizedStatus: 'hadir', keterangan: '' };
-    });
-
-    history[dateStr] = {
-      date: dateStr,
-      day: d,
-      month: 10,
-      year: 2026,
-      sourceName: `Presensi Harian ${d} Okt 2026`,
-      uploadedAt: new Date(`2026-10-${String(d).padStart(2, '0')}T07:15:00`).toISOString(),
-      employees: modifiedEmps,
-    };
-  });
-
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
-  } catch (e) {
-    // Ignore storage quota
-  }
-
-  return history;
 }

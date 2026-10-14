@@ -1,0 +1,51 @@
+{
+  "entities": {
+    "EmployeeItem": {
+      "title": "EmployeeItem",
+      "description": "Individual employee attendance record for a specific day",
+      "type": "object",
+      "properties": {
+        "no": { "type": "number", "description": "Row number" },
+        "employeeId": { "type": "string", "description": "Employee ID or NIK", "maxLength": 64 },
+        "name": { "type": "string", "description": "Full name of employee", "maxLength": 150 },
+        "department": { "type": "string", "description": "Department name", "maxLength": 100 },
+        "branch": { "type": "string", "description": "Branch location", "maxLength": 100 },
+        "jobPosition": { "type": "string", "description": "Job position or title", "maxLength": 100 },
+        "jobLevel": { "type": "string", "description": "Job level e.g. Staff, Middle Manager", "maxLength": 100 },
+        "joinDate": { "type": "string", "description": "Join date string", "maxLength": 50 },
+        "employmentStatus": { "type": "string", "description": "Employment status e.g. Contract, Permanent", "maxLength": 50 },
+        "rawStatus": { "type": "string", "description": "Original raw status code from spreadsheet", "maxLength": 50 },
+        "normalizedStatus": { "type": "string", "description": "Normalized status (hadir, telat, izin, sakit, cuti, alpha, shift_khusus)", "maxLength": 50 },
+        "keterangan": { "type": "string", "description": "Reason or notes", "maxLength": 500 },
+        "lateMinutes": { "type": "number", "description": "Late duration in minutes" }
+      },
+      "required": ["employeeId", "name", "normalizedStatus"]
+    },
+    "DailyRecord": {
+      "title": "DailyRecord",
+      "description": "Daily employee attendance archive record indexed by date",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string", "description": "Date string in YYYY-MM-DD format", "maxLength": 20 },
+        "day": { "type": "number", "description": "Day of the month" },
+        "month": { "type": "number", "description": "Month number 1-12" },
+        "year": { "type": "number", "description": "Year e.g. 2026" },
+        "sourceName": { "type": "string", "description": "Name of source file or spreadsheet", "maxLength": 200 },
+        "uploadedAt": { "type": "string", "description": "ISO timestamp of upload", "maxLength": 50 },
+        "updatedAt": { "type": "string", "description": "ISO timestamp of update", "maxLength": 50 },
+        "totalEmployees": { "type": "number", "description": "Total employees in this day record" },
+        "employees": {
+          "type": "array",
+          "description": "List of employee attendance records"
+        }
+      },
+      "required": ["date", "day", "month", "year", "employees"]
+    }
+  },
+  "firestore": {
+    "/daily_records/{dateId}": {
+      "schema": "#/entities/DailyRecord",
+      "description": "Stores daily attendance archives for each date"
+    }
+  }
+}

@@ -4,16 +4,14 @@ import {
   Clock,
   Download,
   AlertTriangle,
-  Award,
-  BarChart2,
   Database,
-  ArrowUpRight,
-  TrendingUp,
+  Trash2,
+  FileSpreadsheet,
 } from 'lucide-react';
 import {
   calculateMonthlyReport,
   calculateYearlyReport,
-  getStoredDatesList,
+  StoredDayRecord,
   MonthReport,
   YearReport,
 } from '../services/storageService';
@@ -22,21 +20,27 @@ import { exportMonthlyReportToExcel, exportYearlyReportToExcel } from '../servic
 interface MonthlyYearlyReportsProps {
   currentYear: number;
   currentMonth: number;
+  records: Record<string, StoredDayRecord>;
   onSelectDate: (dateStr: string) => void;
+  onDeleteDate: (dateStr: string) => void;
+  onGoToDailyUpload: () => void;
 }
 
 export const MonthlyYearlyReports: React.FC<MonthlyYearlyReportsProps> = ({
   currentYear,
   currentMonth,
+  records,
   onSelectDate,
+  onDeleteDate,
+  onGoToDailyUpload,
 }) => {
   const [reportType, setReportType] = useState<'monthly' | 'yearly'>('monthly');
   const [selectedMonth, setSelectedMonth] = useState<number>(currentMonth);
   const [selectedYear, setSelectedYear] = useState<number>(currentYear);
 
-  const monthlyReport: MonthReport = calculateMonthlyReport(selectedYear, selectedMonth);
-  const yearlyReport: YearReport = calculateYearlyReport(selectedYear);
-  const storedDates = getStoredDatesList();
+  const monthlyReport: MonthReport = calculateMonthlyReport(records, selectedYear, selectedMonth);
+  const yearlyReport: YearReport = calculateYearlyReport(records, selectedYear);
+  const storedDates = Object.keys(records).sort().reverse();
 
   const months = [
     { num: 1, name: 'Januari' },
@@ -52,6 +56,33 @@ export const MonthlyYearlyReports: React.FC<MonthlyYearlyReportsProps> = ({
     { num: 11, name: 'November' },
     { num: 12, name: 'Desember' },
   ];
+
+  if (storedDates.length === 0) {
+    return (
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-8 text-center space-y-4 shadow-xs">
+        <div className="w-14 h-14 rounded-2xl bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mx-auto shadow-xs">
+          <Database className="w-7 h-7" />
+        </div>
+        <div>
+          <h3 className="text-base font-bold text-slate-900 dark:text-white">
+            Belum Ada Data Presensi di Firebase
+          </h3>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-md mx-auto">
+            Semua data dummy telah dibersihkan. Setiap file Excel yang Anda upload harian akan disimpan di Cloud Firestore dan diolah menjadi rekap bulanan serta tahunan secara otomatis.
+          </p>
+        </div>
+        <div>
+          <button
+            onClick={onGoToDailyUpload}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold shadow-sm transition"
+          >
+            <FileSpreadsheet className="w-4 h-4" />
+            <span>Upload File Excel Harian Sekarang</span>
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -103,6 +134,7 @@ export const MonthlyYearlyReports: React.FC<MonthlyYearlyReportsProps> = ({
             >
               <option value={2026}>Tahun 2026</option>
               <option value={2025}>Tahun 2025</option>
+              <option value={2024}>Tahun 2024</option>
             </select>
           )}
         </div>
@@ -132,7 +164,7 @@ export const MonthlyYearlyReports: React.FC<MonthlyYearlyReportsProps> = ({
               <div className="text-2xl font-bold text-slate-900 dark:text-white mt-1">
                 {monthlyReport.recordedDaysCount} Hari
               </div>
-              <span className="text-[11px] text-slate-400">Tersimpan dari upload harian</span>
+              <span className="text-[11px] text-slate-400">Tersimpan di Firestore</span>
             </div>
 
             <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 shadow-xs">
@@ -140,7 +172,7 @@ export const MonthlyYearlyReports: React.FC<MonthlyYearlyReportsProps> = ({
               <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 mt-1">
                 {monthlyReport.avgAttendanceRate}%
               </div>
-              <span className="text-[11px] text-slate-400">Total sebulan</span>
+              <span className="text-[11px] text-slate-400">Bulan {monthlyReport.monthName}</span>
             </div>
 
             <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 shadow-xs">
@@ -148,7 +180,7 @@ export const MonthlyYearlyReports: React.FC<MonthlyYearlyReportsProps> = ({
               <div className="text-2xl font-bold text-amber-600 dark:text-amber-400 mt-1">
                 {monthlyReport.totalTelatCases} Kali
               </div>
-              <span className="text-[11px] text-slate-400">Akumulasi semua karyawan</span>
+              <span className="text-[11px] text-slate-400">Akumulasi sebulan</span>
             </div>
 
             <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 shadow-xs">
@@ -161,7 +193,7 @@ export const MonthlyYearlyReports: React.FC<MonthlyYearlyReportsProps> = ({
                 Hari
               </div>
               <span className="text-[11px] text-slate-400">
-                Izin: {monthlyReport.totalIzinCases} • Sakit: {monthlyReport.totalSakitCases} • Cuti: {monthlyReport.totalCutiCases}
+                I: {monthlyReport.totalIzinCases} • S: {monthlyReport.totalSakitCases} • C: {monthlyReport.totalCutiCases} • A: {monthlyReport.totalAlphaCases}
               </span>
             </div>
           </div>
@@ -225,85 +257,91 @@ export const MonthlyYearlyReports: React.FC<MonthlyYearlyReportsProps> = ({
               </span>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 font-semibold border-b border-slate-200 dark:border-slate-800 text-[11px]">
-                  <tr>
-                    <th className="py-2.5 px-4">Nama & ID Karyawan</th>
-                    <th className="py-2.5 px-3">Departemen</th>
-                    <th className="py-2.5 px-3 text-center">Hari Kerja</th>
-                    <th className="py-2.5 px-3 text-center">Hadir Tepat</th>
-                    <th className="py-2.5 px-3 text-center">Telat</th>
-                    <th className="py-2.5 px-3 text-center">Izin</th>
-                    <th className="py-2.5 px-3 text-center">Sakit</th>
-                    <th className="py-2.5 px-3 text-center">Cuti</th>
-                    <th className="py-2.5 px-3 text-center">Alpha</th>
-                    <th className="py-2.5 px-4 text-center">Tingkat Kehadiran</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-[11px]">
-                  {monthlyReport.employeeSummaries.map((emp) => (
-                    <tr key={emp.employeeId} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
-                      <td className="py-2.5 px-4 font-semibold text-slate-900 dark:text-white">
-                        {emp.name}
-                        <span className="block text-[10px] text-slate-400 font-mono">
-                          {emp.employeeId} • {emp.jobPosition}
-                        </span>
-                      </td>
-                      <td className="py-2.5 px-3 text-slate-600 dark:text-slate-300">
-                        {emp.department}
-                      </td>
-                      <td className="py-2.5 px-3 text-center text-slate-500 font-mono font-medium">
-                        {emp.totalDays}
-                      </td>
-                      <td className="py-2.5 px-3 text-center font-bold text-emerald-600 dark:text-emerald-400 font-mono">
-                        {emp.totalHadir}
-                      </td>
-                      <td className="py-2.5 px-3 text-center font-mono">
-                        {emp.totalTelat > 0 ? (
-                          <span className="text-amber-600 font-bold">{emp.totalTelat}x</span>
-                        ) : (
-                          <span className="text-slate-300">-</span>
-                        )}
-                      </td>
-                      <td className="py-2.5 px-3 text-center font-mono">
-                        {emp.totalIzin > 0 ? (
-                          <span className="text-blue-600 font-semibold">{emp.totalIzin}</span>
-                        ) : (
-                          <span className="text-slate-300">-</span>
-                        )}
-                      </td>
-                      <td className="py-2.5 px-3 text-center font-mono">
-                        {emp.totalSakit > 0 ? (
-                          <span className="text-rose-600 font-semibold">{emp.totalSakit}</span>
-                        ) : (
-                          <span className="text-slate-300">-</span>
-                        )}
-                      </td>
-                      <td className="py-2.5 px-3 text-center font-mono">
-                        {emp.totalCuti > 0 ? (
-                          <span className="text-purple-600 font-semibold">{emp.totalCuti}</span>
-                        ) : (
-                          <span className="text-slate-300">-</span>
-                        )}
-                      </td>
-                      <td className="py-2.5 px-3 text-center font-mono">
-                        {emp.totalAlpha > 0 ? (
-                          <span className="text-red-600 font-bold">{emp.totalAlpha}</span>
-                        ) : (
-                          <span className="text-slate-300">-</span>
-                        )}
-                      </td>
-                      <td className="py-2.5 px-4 text-center">
-                        <span className="font-bold text-slate-800 dark:text-slate-200">
-                          {emp.attendanceRate}%
-                        </span>
-                      </td>
+            {monthlyReport.employeeSummaries.length === 0 ? (
+              <div className="p-8 text-center text-xs text-slate-400">
+                Tidak ada data absensi yang tercatat untuk bulan {monthlyReport.monthName} {monthlyReport.year}.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 font-semibold border-b border-slate-200 dark:border-slate-800 text-[11px]">
+                    <tr>
+                      <th className="py-2.5 px-4">Nama & ID Karyawan</th>
+                      <th className="py-2.5 px-3">Departemen</th>
+                      <th className="py-2.5 px-3 text-center">Hari Kerja</th>
+                      <th className="py-2.5 px-3 text-center">Hadir Tepat</th>
+                      <th className="py-2.5 px-3 text-center">Telat</th>
+                      <th className="py-2.5 px-3 text-center">Izin</th>
+                      <th className="py-2.5 px-3 text-center">Sakit</th>
+                      <th className="py-2.5 px-3 text-center">Cuti</th>
+                      <th className="py-2.5 px-3 text-center">Alpha</th>
+                      <th className="py-2.5 px-4 text-center">Tingkat Kehadiran</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-[11px]">
+                    {monthlyReport.employeeSummaries.map((emp) => (
+                      <tr key={emp.employeeId} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
+                        <td className="py-2.5 px-4 font-semibold text-slate-900 dark:text-white">
+                          {emp.name}
+                          <span className="block text-[10px] text-slate-400 font-mono">
+                            {emp.employeeId} • {emp.jobPosition}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3 text-slate-600 dark:text-slate-300">
+                          {emp.department}
+                        </td>
+                        <td className="py-2.5 px-3 text-center text-slate-500 font-mono font-medium">
+                          {emp.totalDays}
+                        </td>
+                        <td className="py-2.5 px-3 text-center font-bold text-emerald-600 dark:text-emerald-400 font-mono">
+                          {emp.totalHadir}
+                        </td>
+                        <td className="py-2.5 px-3 text-center font-mono">
+                          {emp.totalTelat > 0 ? (
+                            <span className="text-amber-600 font-bold">{emp.totalTelat}x</span>
+                          ) : (
+                            <span className="text-slate-300">-</span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 text-center font-mono">
+                          {emp.totalIzin > 0 ? (
+                            <span className="text-blue-600 font-semibold">{emp.totalIzin}</span>
+                          ) : (
+                            <span className="text-slate-300">-</span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 text-center font-mono">
+                          {emp.totalSakit > 0 ? (
+                            <span className="text-rose-600 font-semibold">{emp.totalSakit}</span>
+                          ) : (
+                            <span className="text-slate-300">-</span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 text-center font-mono">
+                          {emp.totalCuti > 0 ? (
+                            <span className="text-purple-600 font-semibold">{emp.totalCuti}</span>
+                          ) : (
+                            <span className="text-slate-300">-</span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 text-center font-mono">
+                          {emp.totalAlpha > 0 ? (
+                            <span className="text-red-600 font-bold">{emp.totalAlpha}</span>
+                          ) : (
+                            <span className="text-slate-300">-</span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-4 text-center">
+                          <span className="font-bold text-slate-800 dark:text-slate-200">
+                            {emp.attendanceRate}%
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </div>
       ) : (
@@ -323,7 +361,7 @@ export const MonthlyYearlyReports: React.FC<MonthlyYearlyReportsProps> = ({
               <div className="text-2xl font-bold text-amber-600 dark:text-amber-400 mt-1">
                 {yearlyReport.totalTelatYear} Kasus
               </div>
-              <span className="text-[11px] text-slate-400">Sepanjang tahun</span>
+              <span className="text-[11px] text-slate-400">Sepanjang tahun {yearlyReport.year}</span>
             </div>
 
             <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 shadow-xs">
@@ -359,11 +397,11 @@ export const MonthlyYearlyReports: React.FC<MonthlyYearlyReportsProps> = ({
                 >
                   <div className="font-bold text-slate-800 dark:text-slate-200">{m.monthName}</div>
                   <div className="text-lg font-bold text-emerald-600 dark:text-emerald-400 mt-1">
-                    {m.avgRate}%
+                    {m.daysCount > 0 ? `${m.avgRate}%` : '-'}
                   </div>
                   <div className="text-[10px] text-slate-400 mt-1 flex justify-between">
+                    <span>{m.daysCount} hari data</span>
                     <span>Telat: {m.totalTelat}</span>
-                    <span>Absen: {m.totalAbsen}</span>
                   </div>
                 </div>
               ))}
@@ -372,34 +410,52 @@ export const MonthlyYearlyReports: React.FC<MonthlyYearlyReportsProps> = ({
         </div>
       )}
 
-      {/* Arsip Tanggal Tersimpan */}
+      {/* Arsip Tanggal Tersimpan di Firebase Firestore */}
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow-xs">
         <div className="flex items-center justify-between mb-2.5">
           <div className="flex items-center gap-2">
             <Database className="w-4 h-4 text-emerald-600" />
             <h4 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">
-              Arsip Data Harian Tersimpan ({storedDates.length} Tanggal)
+              Arsip Data Harian di Cloud Firestore ({storedDates.length} Tanggal)
             </h4>
           </div>
-          <span className="text-[11px] text-emerald-600 font-medium">
-            Otomatis disimpan di penyimpanan lokal setiap kali upload
+          <span className="text-[11px] text-emerald-600 font-semibold">
+            Tersimpan Real-Time di Firebase
           </span>
         </div>
         <p className="text-xs text-slate-500 mb-3">
-          Setiap file Excel yang diunggah harian otomatis disimpan ke database browser dan diakumulasikan ke olahan data bulanan dan tahunan. Klik tanggal untuk membuka rincian harian:
+          Setiap file Excel yang diunggah harian disimpan secara langsung ke Cloud Firestore. Klik tanggal untuk melihat rincian hari tersebut, atau hapus arsip jika diperlukan:
         </p>
 
-        <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
-          {storedDates.map((dateStr) => (
-            <button
-              key={dateStr}
-              onClick={() => onSelectDate(dateStr)}
-              className="px-2.5 py-1 rounded-md text-xs font-mono font-semibold bg-slate-100 hover:bg-emerald-100 hover:text-emerald-800 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition"
-              title="Buka data harian tanggal ini"
-            >
-              {dateStr}
-            </button>
-          ))}
+        <div className="flex flex-wrap gap-2 max-h-36 overflow-y-auto">
+          {storedDates.map((dateStr) => {
+            const count = records[dateStr]?.employees?.length || 0;
+            return (
+              <div
+                key={dateStr}
+                className="flex items-center bg-slate-100 dark:bg-slate-800 rounded-lg pl-2.5 pr-1 py-1 text-xs gap-2 border border-slate-200 dark:border-slate-700"
+              >
+                <button
+                  onClick={() => onSelectDate(dateStr)}
+                  className="font-mono font-semibold hover:text-emerald-600 text-slate-800 dark:text-slate-200"
+                  title="Buka rincian presensi tanggal ini"
+                >
+                  {dateStr} ({count} org)
+                </button>
+                <button
+                  onClick={() => {
+                    if (window.confirm(`Hapus data presensi tanggal ${dateStr} dari Firestore?`)) {
+                      onDeleteDate(dateStr);
+                    }
+                  }}
+                  className="text-slate-400 hover:text-rose-500 p-1 transition"
+                  title="Hapus data tanggal ini dari Firebase"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>

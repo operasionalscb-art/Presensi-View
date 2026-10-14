@@ -9,13 +9,13 @@ import {
   initAuth,
   googleSignIn,
   logout,
-  getAccessToken,
+  testConnection,
 } from './services/firebaseAuth';
 import {
   fetchSpreadsheetRange,
 } from './services/googleSheets';
 import { parseRowsToEmployees } from './services/dataParser';
-import { INITIAL_EMPLOYEES, generateOctoberTrend } from './data/initialData';
+import { calculateRealMonthlyTrend, EMPTY_EMPLOYEES } from './data/initialData';
 import { EmployeeRecord, DayTrendPoint } from './types/attendance';
 import { Header } from './components/Header';
 import { CumulativeStats } from './components/CumulativeStats';
@@ -25,23 +25,35 @@ import { MonthlyYearlyReports } from './components/MonthlyYearlyReports';
 import { DataSourceModal } from './components/DataSourceModal';
 import { AddRecordModal } from './components/AddRecordModal';
 import {
-  saveDayHistory,
-  getHistoryForDate,
+  saveDayToFirestore,
+  deleteDayFromFirestore,
+  subscribeDailyRecords,
+  StoredDayRecord,
 } from './services/storageService';
 import {
   CheckCircle2,
   Calendar,
   BarChart3,
+  FileSpreadsheet,
+  PlusCircle,
   Database,
+  CloudCheck,
 } from 'lucide-react';
 
 export default function App() {
-  const [employees, setEmployees] = useState<EmployeeRecord[]>(INITIAL_EMPLOYEES);
-  const [currentDate, setCurrentDate] = useState<string>('2026-10-12');
-  const [sourceType, setSourceType] = useState<'google-sheets' | 'excel' | 'initial'>('initial');
-  const [sourceName, setSourceName] = useState<string>('Data Presensi (Format Gambar)');
+  const [employees, setEmployees] = useState<EmployeeRecord[]>(EMPTY_EMPLOYEES);
+  const [currentDate, setCurrentDate] = useState<string>(() => {
+    const today = new Date();
+    return today.toISOString().split('T')[0];
+  });
+  const [sourceType, setSourceType] = useState<'google-sheets' | 'excel' | 'initial'>('excel');
+  const [sourceName, setSourceName] = useState<string>('Firebase Firestore');
   const [connectedSpreadsheetId, setConnectedSpreadsheetId] = useState<string | undefined>();
   const [connectedSheetName, setConnectedSheetName] = useState<string | undefined>();
+
+  // Firestore real-time stored records dictionary
+  const [allDailyRecords, setAllDailyRecords] = useState<Record<string, StoredDayRecord>>({});
+  const [isLoadingFirestore, setIsLoadingFirestore] = useState<boolean>(true);
 
   // Auto-sync
   const [autoSync, setAutoSync] = useState<boolean>(true);
@@ -49,6 +61,9 @@ export default function App() {
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(new Date());
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // View Mode: 'harian' (Daily Dashboard) or 'rekap' (Monthly & Yearly Aggregations from Daily Archives)
+  const [viewMode, setViewMode] = useState<'harian' | 'rekap'>('harian');
 
   // Modals
   const [isSourceModalOpen, setIsSourceModalOpen] = useState<boolean>(false);
@@ -59,24 +74,6 @@ export default function App() {
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState<boolean>(false);
 
-  // Extract day and month from currentDate
-  const { activeDay, monthName, year } = useMemo(() => {
-    const d = new Date(currentDate);
-    const day = isNaN(d.getDate()) ? 12 : d.getDate();
-    const months = [
-      'January', 'February', 'March', 'April', 'May', 'June',
-      'July', 'August', 'September', 'October', 'November', 'December'
-    ];
-    const m = isNaN(d.getMonth()) ? 'October' : months[d.getMonth()];
-    const y = isNaN(d.getFullYear()) ? 2026 : d.getFullYear();
-    return { activeDay: day, monthName: m, year: y };
-  }, [currentDate]);
-
-  // Generate dynamic monthly trend based on current employee records
-  const trendData: DayTrendPoint[] = useMemo(() => {
-    return generateOctoberTrend(employees, activeDay);
-  }, [employees, activeDay]);
-
   const showToast = useCallback((msg: string) => {
     setToastMessage(msg);
     setTimeout(() => {
@@ -84,9 +81,11 @@ export default function App() {
     }, 4000);
   }, []);
 
-  // Initialize Auth
+  // Initialize Auth & Firestore
   useEffect(() => {
-    const unsubscribe = initAuth(
+    testConnection();
+
+    const unsubscribeAuth = initAuth(
       (currentUser, token) => {
         setUser(currentUser);
         setAccessToken(token);
@@ -96,8 +95,55 @@ export default function App() {
         setAccessToken(null);
       }
     );
-    return () => unsubscribe();
+
+    // Subscribe to real-time daily records from Cloud Firestore
+    const unsubscribeFirestore = subscribeDailyRecords(
+      (records) => {
+        setAllDailyRecords(records);
+        setIsLoadingFirestore(false);
+        setLastSyncTime(new Date());
+      },
+      (err) => {
+        console.error('Firestore subscription error:', err);
+        setIsLoadingFirestore(false);
+      }
+    );
+
+    return () => {
+      unsubscribeAuth();
+      unsubscribeFirestore();
+    };
   }, []);
+
+  // Update displayed employees whenever currentDate or allDailyRecords changes
+  useEffect(() => {
+    if (allDailyRecords[currentDate]) {
+      setEmployees(allDailyRecords[currentDate].employees || []);
+      setSourceName(allDailyRecords[currentDate].sourceName || 'Firebase Firestore');
+    } else {
+      setEmployees([]);
+      setSourceName('Belum ada data untuk tanggal ini');
+    }
+  }, [currentDate, allDailyRecords]);
+
+  // Extract day, month, and year from currentDate
+  const { activeDay, monthName, year, monthNumber } = useMemo(() => {
+    const d = new Date(currentDate);
+    const day = isNaN(d.getDate()) ? 1 : d.getDate();
+    const months = [
+      'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+      'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+    ];
+    const mNum = isNaN(d.getMonth()) ? 10 : d.getMonth() + 1;
+    const m = months[mNum - 1];
+    const y = isNaN(d.getFullYear()) ? 2026 : d.getFullYear();
+    return { activeDay: day, monthName: m, year: y, monthNumber: mNum };
+  }, [currentDate]);
+
+  // Generate real monthly trend strictly from genuine records in Firestore
+  const trendData: DayTrendPoint[] = useMemo(() => {
+    return calculateRealMonthlyTrend(allDailyRecords, year, monthNumber);
+  }, [allDailyRecords, year, monthNumber]);
 
   // Google sign in handler
   const handleGoogleSignIn = async () => {
@@ -124,7 +170,7 @@ export default function App() {
     showToast('Telah keluar dari akun Google.');
   };
 
-  // Perform sync
+  // Perform Google Sheets sync if connected
   const performSync = useCallback(async () => {
     if (isSyncing) return;
     setIsSyncing(true);
@@ -138,7 +184,7 @@ export default function App() {
         );
         const updatedEmployees = parseRowsToEmployees(rawRows);
         if (updatedEmployees.length > 0) {
-          setEmployees(updatedEmployees);
+          await saveDayToFirestore(currentDate, updatedEmployees, 'Google Sheets Sync');
         }
       }
       setLastSyncTime(new Date());
@@ -147,7 +193,7 @@ export default function App() {
     } finally {
       setIsSyncing(false);
     }
-  }, [isSyncing, sourceType, connectedSpreadsheetId, connectedSheetName, accessToken]);
+  }, [isSyncing, sourceType, connectedSpreadsheetId, connectedSheetName, accessToken, currentDate]);
 
   // Periodic Auto-Sync Timer
   useEffect(() => {
@@ -160,53 +206,49 @@ export default function App() {
     return () => clearInterval(interval);
   }, [autoSync, syncIntervalSec, performSync]);
 
-  // View Mode: 'harian' (Daily Dashboard) or 'rekap' (Monthly & Yearly Aggregations from Daily Archives)
-  const [viewMode, setViewMode] = useState<'harian' | 'rekap'>('harian');
-
-  // Load existing data for date on mount or date change
-  useEffect(() => {
-    const stored = getHistoryForDate(currentDate);
-    if (stored && stored.length > 0) {
-      setEmployees(stored);
-    } else {
-      // Save current date's initial dataset into archive
-      saveDayHistory(currentDate, employees, sourceName);
-    }
-  }, [currentDate]);
-
-  const handleApplyNewData = (
+  const handleApplyNewData = async (
     newEmployees: EmployeeRecord[],
     newType: 'google-sheets' | 'excel' | 'initial',
     newName: string,
     sheetId?: string,
     sheetTab?: string
   ) => {
-    setEmployees(newEmployees);
     setSourceType(newType);
     setSourceName(newName);
     setConnectedSpreadsheetId(sheetId);
     setConnectedSheetName(sheetTab);
     setLastSyncTime(new Date());
 
-    // Automatically persist to daily history archive so it enriches monthly & yearly reports!
-    saveDayHistory(currentDate, newEmployees, newName);
-
-    showToast(`Data presensi berhasil diperbarui & disimpan ke arsip (${newEmployees.length} karyawan).`);
+    // Save directly to Firebase Firestore
+    try {
+      await saveDayToFirestore(currentDate, newEmployees, newName);
+      showToast(`Data presensi tanggal ${currentDate} berhasil disimpan ke Firebase (${newEmployees.length} karyawan).`);
+    } catch (err: any) {
+      showToast('Gagal menyimpan ke Firebase Firestore.');
+    }
   };
 
-  const handleAddEmployee = (newRecord: EmployeeRecord) => {
+  const handleAddEmployee = async (newRecord: EmployeeRecord) => {
     const updated = [newRecord, ...employees];
-    setEmployees(updated);
-    setLastSyncTime(new Date());
+    try {
+      await saveDayToFirestore(currentDate, updated, sourceName);
+      showToast(`Input presensi "${newRecord.name}" berhasil disimpan ke Firebase.`);
+    } catch (err: any) {
+      showToast('Gagal menyimpan ke Firebase Firestore.');
+    }
+  };
 
-    // Automatically persist to daily history archive
-    saveDayHistory(currentDate, updated, sourceName);
-
-    showToast(`Input presensi baru untuk "${newRecord.name}" berhasil ditambahkan & disimpan ke arsip.`);
+  const handleDeleteDay = async (dateStr: string) => {
+    try {
+      await deleteDayFromFirestore(dateStr);
+      showToast(`Data presensi tanggal ${dateStr} berhasil dihapus dari Firebase.`);
+    } catch (err: any) {
+      showToast('Gagal menghapus data dari Firebase.');
+    }
   };
 
   const handleSelectDayFromChart = (day: number) => {
-    const formatted = `2026-10-${String(day).padStart(2, '0')}`;
+    const formatted = `${year}-${String(monthNumber).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     setCurrentDate(formatted);
   };
 
@@ -240,7 +282,7 @@ export default function App() {
         isLoggingIn={isLoggingIn}
       />
 
-      {/* View Switcher Bar & Storage Status */}
+      {/* View Switcher Bar & Firebase Backend Status */}
       <div className="bg-slate-900/90 text-slate-300 border-b border-slate-800 text-xs py-2 px-4 sm:px-8">
         <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
           {/* Mode Switcher Tabs */}
@@ -271,12 +313,17 @@ export default function App() {
 
           <div className="flex items-center gap-2 text-[11px] text-slate-400">
             <span className="flex h-2 w-2 relative">
-              <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${autoSync ? 'bg-emerald-400 opacity-75' : 'bg-slate-500'}`}></span>
-              <span className={`relative inline-flex rounded-full h-2 w-2 ${autoSync ? 'bg-emerald-500' : 'bg-slate-500'}`}></span>
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
             </span>
             <span>
-              Arsip Excel Otomatis:{' '}
-              <strong className="text-emerald-400">Aktif & Tersimpan Permanen</strong>
+              Database Cloud:{' '}
+              <strong className="text-emerald-400">Firebase Firestore Aktif</strong>
+            </span>
+            <span className="text-slate-600">•</span>
+            <span>
+              Arsip Tersimpan:{' '}
+              <strong className="text-slate-200">{Object.keys(allDailyRecords).length} Hari</strong>
             </span>
           </div>
         </div>
@@ -292,10 +339,43 @@ export default function App() {
               activeDateText={`${activeDay} ${monthName} ${year}`}
             />
 
-            {/* Detailed Breakdown: Specifically lists names, job positions, and reasons for late arrivals and absences */}
-            <AbsenceAndLateLists employees={employees} />
+            {/* Empty State Banner if no records on selected date */}
+            {employees.length === 0 && !isLoadingFirestore && (
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 text-center space-y-3 shadow-xs">
+                <div className="w-12 h-12 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-500 flex items-center justify-center mx-auto">
+                  <FileSpreadsheet className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                    Belum Ada Data Presensi Tanggal {activeDay} {monthName} {year}
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-md mx-auto">
+                    Data dummy telah dihapus. Silakan upload file Excel presensi harian atau tambahkan data karyawan untuk menyimpan ke Firebase.
+                  </p>
+                </div>
+                <div className="flex items-center justify-center gap-2.5 pt-1">
+                  <button
+                    onClick={() => setIsSourceModalOpen(true)}
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold shadow-xs transition"
+                  >
+                    <FileSpreadsheet className="w-3.5 h-3.5" />
+                    <span>Upload File Excel</span>
+                  </button>
+                  <button
+                    onClick={() => setIsAddModalOpen(true)}
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-semibold transition"
+                  >
+                    <PlusCircle className="w-3.5 h-3.5" />
+                    <span>Input Manual</span>
+                  </button>
+                </div>
+              </div>
+            )}
 
-            {/* Interactive Monthly Trend: Attendance percentage, stacked bar distribution, and late arrival frequency */}
+            {/* Detailed Breakdown: Specifically lists names, job positions, and reasons for late arrivals and absences */}
+            {employees.length > 0 && <AbsenceAndLateLists employees={employees} />}
+
+            {/* Interactive Monthly Trend: Attendance percentage strictly based on real recorded days */}
             <InteractiveTrendChart
               trendData={trendData}
               selectedDay={activeDay}
@@ -308,11 +388,17 @@ export default function App() {
           /* Monthly & Yearly Aggregation Reports */
           <MonthlyYearlyReports
             currentYear={year}
-            currentMonth={new Date(currentDate).getMonth() + 1 || 10}
+            currentMonth={monthNumber}
+            records={allDailyRecords}
             onSelectDate={(dateStr) => {
               setCurrentDate(dateStr);
               setViewMode('harian');
-              showToast(`Membuka data harian tanggal ${dateStr}`);
+              showToast(`Membuka data presensi tanggal ${dateStr}`);
+            }}
+            onDeleteDate={handleDeleteDay}
+            onGoToDailyUpload={() => {
+              setViewMode('harian');
+              setIsSourceModalOpen(true);
             }}
           />
         )}

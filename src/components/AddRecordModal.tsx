@@ -16,29 +16,22 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
   onAddEmployee,
   currentCount,
 }) => {
-  const [employeeId, setEmployeeId] = useState(`24.${String(Math.floor(1000 + Math.random() * 9000))}`);
+  const [employeeId, setEmployeeId] = useState('');
   const [name, setName] = useState('');
   const [department, setDepartment] = useState('Sekolah');
   const [branch, setBranch] = useState('Pusat');
-  const [jobPosition, setJobPosition] = useState('Guru');
+  const [jobPosition, setJobPosition] = useState('');
   const [jobLevel, setJobLevel] = useState('Staff');
-  const [joinDate, setJoinDate] = useState('2024-02-01');
+  const [joinDate, setJoinDate] = useState('');
   const [employmentStatus, setEmploymentStatus] = useState('Contract');
-  const [statusCode, setStatusCode] = useState<'H' | 'H/LI/NCO' | 'I' | 'S' | 'C' | 'A' | 'SHIFT'>('H/LI/NCO');
-  const [keterangan, setKeterangan] = useState('Telat 20 menit');
+  const [statusCode, setStatusCode] = useState<'H' | 'H/LI/NCO' | 'I' | 'S' | 'C' | 'A' | 'SHIFT'>('H');
+  const [keterangan, setKeterangan] = useState('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
   const handleStatusChange = (val: 'H' | 'H/LI/NCO' | 'I' | 'S' | 'C' | 'A' | 'SHIFT') => {
     setStatusCode(val);
-    if (val === 'H') setKeterangan('');
-    else if (val === 'H/LI/NCO') setKeterangan('Telat 15 menit');
-    else if (val === 'I') setKeterangan('Izin urusan keluarga');
-    else if (val === 'S') setKeterangan('Sakit demam (surat dokter)');
-    else if (val === 'C') setKeterangan('Cuti tahunan');
-    else if (val === 'A') setKeterangan('Tanpa keterangan / belum ada kabar');
-    else if (val === 'SHIFT') setKeterangan('Shift sore');
   };
 
   const handleSubmit = (e: React.FormEvent) => {
