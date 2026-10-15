@@ -19,7 +19,7 @@ import { calculateRealMonthlyTrend, EMPTY_EMPLOYEES } from './data/initialData';
 import { EmployeeRecord, DayTrendPoint } from './types/attendance';
 import { Header } from './components/Header';
 import { CumulativeStats } from './components/CumulativeStats';
-import { AbsenceAndLateLists } from './components/AbsenceAndLateLists';
+import { AbsenceAndLateLists, EmployeeListTab } from './components/AbsenceAndLateLists';
 import { InteractiveTrendChart } from './components/InteractiveTrendChart';
 import { MonthlyYearlyReports } from './components/MonthlyYearlyReports';
 import { DataSourceModal } from './components/DataSourceModal';
@@ -64,6 +64,7 @@ export default function App() {
 
   // View Mode: 'harian' (Daily Dashboard) or 'rekap' (Monthly & Yearly Aggregations from Daily Archives)
   const [viewMode, setViewMode] = useState<'harian' | 'rekap'>('harian');
+  const [employeeListTab, setEmployeeListTab] = useState<EmployeeListTab>('all');
 
   // Modals
   const [isSourceModalOpen, setIsSourceModalOpen] = useState<boolean>(false);
@@ -354,10 +355,18 @@ export default function App() {
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-5 space-y-5">
         {viewMode === 'harian' ? (
           <>
-            {/* Cumulative Stats: Highlights total on-time present employees cumulatively without individual names */}
+            {/* Cumulative Stats: Highlights total on-time present employees, late, and absent with interactive filtering */}
             <CumulativeStats
               employees={employees}
               activeDateText={`${activeDay} ${monthName} ${year}`}
+              activeFilter={employeeListTab}
+              onSelectFilter={(tab) => {
+                setEmployeeListTab(tab);
+                const el = document.getElementById('daftar-karyawan-section');
+                if (el) {
+                  el.scrollIntoView({ behavior: 'smooth' });
+                }
+              }}
             />
 
             {/* Empty State Banner if no records on selected date */}
@@ -393,8 +402,14 @@ export default function App() {
               </div>
             )}
 
-            {/* Detailed Breakdown: Specifically lists names, job positions, and reasons for late arrivals and absences */}
-            {employees.length > 0 && <AbsenceAndLateLists employees={employees} />}
+            {/* Detailed Breakdown: Lists names, positions, and status (Hadir Tepat Waktu, Telat, Izin, Sakit, Cuti, Alpha) */}
+            {employees.length > 0 && (
+              <AbsenceAndLateLists
+                employees={employees}
+                activeTab={employeeListTab}
+                onTabChange={setEmployeeListTab}
+              />
+            )}
 
             {/* Interactive Monthly Trend: Attendance percentage strictly based on real recorded days */}
             <InteractiveTrendChart

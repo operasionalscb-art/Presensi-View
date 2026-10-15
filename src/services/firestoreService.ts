@@ -128,6 +128,7 @@ export async function fetchAllDaysFromFirestore(): Promise<Record<string, Stored
           year: Number(data.year) || new Date(data.date).getFullYear(),
           sourceName: data.sourceName || 'Firestore Cloud',
           uploadedAt: data.uploadedAt || new Date().toISOString(),
+          totalEmployees: Number(data.totalEmployees) || data.employees.length,
           employees: data.employees,
         };
       }
