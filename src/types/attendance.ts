@@ -6,16 +6,43 @@ export interface EmployeeRecord {
   no: number;
   employeeId: string;
   name: string;
+  date?: string; // e.g. "2026-09-17"
+  shift?: string; // e.g. "Guru", "Pembina", "Staff"
+  scheduleIn?: string; // e.g. "07:00"
+  scheduleOut?: string; // e.g. "16:00"
+  rawStatus: string; // e.g. "H", "H/LI/NCO", "I", "S", "C", "A"
+  normalizedStatus: NormalizedStatus;
+  checkIn?: string; // e.g. "06:48"
+  checkOut?: string; // e.g. "16:03"
+  branch: string; // e.g. "Pusat"
+  department: string; // e.g. "Sekolah", "Asrama"
+  jobPosition: string; // e.g. "WKS Bidang Kurikulum", "Kepala Sekolah"
+  jobLevel: string; // e.g. "Middle Manager", "Top Manager", "Staff"
+  employmentStatus: string; // e.g. "Contract", "Permanent"
+  joinDate: string; // e.g. "2017-12-18"
+  keterangan: string; // e.g. "Telat 12 menit", "Tepat Waktu"
+  lateMinutes?: number;
+  earlyLeaveMinutes?: number;
+}
+
+export interface EmployeeDisciplineRank {
+  rank: number;
+  employeeId: string;
+  name: string;
   department: string;
   branch: string;
   jobPosition: string;
-  jobLevel: string;
-  joinDate: string;
-  employmentStatus: string;
-  rawStatus: string; // e.g. "H", "H/LI/NCO", "I", "S", "C"
-  normalizedStatus: NormalizedStatus;
-  keterangan: string; // e.g. "Telat 30 menit", "Shift sore", "Demam tinggi"
-  lateMinutes?: number;
+  totalPresent: number;
+  totalOnTime: number;
+  totalLate: number;
+  totalLateMinutes: number;
+  totalAbsent: number;
+  attendanceRate: number; // %
+  disciplineScore: number; // 0 - 100
+  avgCheckInTime?: string;
+  earliestCheckIn?: string;
+  badgeLevel: 'gold' | 'silver' | 'bronze' | 'top' | 'standard';
+  badgeTitle: string;
 }
 
 export interface DailySummary {

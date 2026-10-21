@@ -20,10 +20,12 @@ import { EmployeeRecord, DayTrendPoint } from './types/attendance';
 import { Header } from './components/Header';
 import { CumulativeStats } from './components/CumulativeStats';
 import { AbsenceAndLateLists, EmployeeListTab } from './components/AbsenceAndLateLists';
+import { DisciplineRanking } from './components/DisciplineRanking';
 import { InteractiveTrendChart } from './components/InteractiveTrendChart';
 import { MonthlyYearlyReports } from './components/MonthlyYearlyReports';
 import { DataSourceModal } from './components/DataSourceModal';
 import { AddRecordModal } from './components/AddRecordModal';
+import { SAMPLE_IMAGE_EMPLOYEES, SAMPLE_IMAGE_DATE } from './data/sampleImageRecords';
 import {
   saveDayToFirestore,
   saveMultipleDaysToFirestore,
@@ -38,6 +40,9 @@ import {
   FileSpreadsheet,
   PlusCircle,
   Database,
+  Trophy,
+  Table as TableIcon,
+  Sparkles,
 } from 'lucide-react';
 
 export default function App() {
@@ -62,9 +67,27 @@ export default function App() {
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // View Mode: 'harian' (Daily Dashboard) or 'rekap' (Monthly & Yearly Aggregations from Daily Archives)
-  const [viewMode, setViewMode] = useState<'harian' | 'rekap'>('harian');
+  // View Mode: 'harian' (Daily Dashboard), 'ranking' (Discipline Ranking), or 'rekap' (Monthly & Yearly Aggregations)
+  const [viewMode, setViewMode] = useState<'harian' | 'ranking' | 'rekap'>('harian');
   const [employeeListTab, setEmployeeListTab] = useState<EmployeeListTab>('all');
+  const [activeMainSubTab, setActiveMainSubTab] = useState<'table' | 'ranking'>('table');
+
+  // Load sample dataset matching user uploaded image format into Firestore
+  const handleLoadSampleImageData = async () => {
+    try {
+      showToast('Menyimpan contoh data format tabel gambar (17 Sept 2026) ke Firebase...');
+      await saveDayToFirestore(
+        SAMPLE_IMAGE_DATE,
+        SAMPLE_IMAGE_EMPLOYEES,
+        'Format Tabel Gambar (17 Sept 2026)'
+      );
+      setCurrentDate(SAMPLE_IMAGE_DATE);
+      showToast('Berhasil memuat 13 data presensi sesuai format tabel gambar!');
+    } catch (err: any) {
+      console.error('Error loading sample image data:', err);
+      showToast(`Gagal memuat: ${err.message || 'Coba lagi'}`);
+    }
+  };
 
   // Modals
   const [isSourceModalOpen, setIsSourceModalOpen] = useState<boolean>(false);
@@ -321,6 +344,17 @@ export default function App() {
               <span>Presensi Harian</span>
             </button>
             <button
+              onClick={() => setViewMode('ranking')}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold transition ${
+                viewMode === 'ranking'
+                  ? 'bg-amber-600 text-white shadow-xs'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Trophy className="w-3.5 h-3.5 text-amber-400" />
+              <span>Karyawan Terdisiplin (Ranking)</span>
+            </button>
+            <button
               onClick={() => setViewMode('rekap')}
               className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold transition ${
                 viewMode === 'rekap'
@@ -362,6 +396,7 @@ export default function App() {
               activeFilter={employeeListTab}
               onSelectFilter={(tab) => {
                 setEmployeeListTab(tab);
+                setActiveMainSubTab('table');
                 const el = document.getElementById('daftar-karyawan-section');
                 if (el) {
                   el.scrollIntoView({ behavior: 'smooth' });
@@ -380,16 +415,23 @@ export default function App() {
                     Belum Ada Data Presensi Tanggal {activeDay} {monthName} {year}
                   </h3>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-md mx-auto">
-                    Data dummy telah dihapus. Silakan upload file Excel presensi harian atau tambahkan data karyawan untuk menyimpan ke Firebase.
+                    Data dummy telah dihapus. Silakan upload file Excel presensi harian atau gunakan tombol contoh format untuk mencoba format tabel dan ranking secara instan di Firebase.
                   </p>
                 </div>
-                <div className="flex items-center justify-center gap-2.5 pt-1">
+                <div className="flex flex-wrap items-center justify-center gap-2.5 pt-1">
                   <button
                     onClick={() => setIsSourceModalOpen(true)}
                     className="flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold shadow-xs transition"
                   >
                     <FileSpreadsheet className="w-3.5 h-3.5" />
                     <span>Upload File Excel</span>
+                  </button>
+                  <button
+                    onClick={handleLoadSampleImageData}
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-xs font-semibold shadow-xs transition"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Muat Contoh Format Gambar (17 Sept 2026)</span>
                   </button>
                   <button
                     onClick={() => setIsAddModalOpen(true)}
@@ -402,12 +444,64 @@ export default function App() {
               </div>
             )}
 
-            {/* Detailed Breakdown: Lists names, positions, and status (Hadir Tepat Waktu, Telat, Izin, Sakit, Cuti, Alpha) */}
+            {/* View Switcher Bar for Table Format vs Discipline Ranking */}
             {employees.length > 0 && (
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2 rounded-xl shadow-xs">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setActiveMainSubTab('table')}
+                    className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition ${
+                      activeMainSubTab === 'table'
+                        ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 shadow-xs'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800'
+                    }`}
+                  >
+                    <TableIcon className="w-4 h-4 text-emerald-500" />
+                    <span>Format Tabel Presensi (16 Kolom Sesuai Gambar)</span>
+                  </button>
+                  <button
+                    onClick={() => setActiveMainSubTab('ranking')}
+                    className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition ${
+                      activeMainSubTab === 'ranking'
+                        ? 'bg-amber-600 text-white shadow-xs'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40'
+                    }`}
+                  >
+                    <Trophy className="w-4 h-4 text-amber-500" />
+                    <span>Karyawan Terdisiplin - Ranking</span>
+                    <span className="px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-700 dark:text-amber-300 text-[10px] font-black">
+                      LEADERBOARD
+                    </span>
+                  </button>
+                </div>
+                <div className="text-[11px] text-slate-400 pr-2">
+                  Tanggal Presensi:{' '}
+                  <strong className="text-slate-700 dark:text-slate-200 font-mono">
+                    {activeDay} {monthName} {year}
+                  </strong>
+                </div>
+              </div>
+            )}
+
+            {/* Detailed Table according to image format */}
+            {employees.length > 0 && activeMainSubTab === 'table' && (
               <AbsenceAndLateLists
                 employees={employees}
                 activeTab={employeeListTab}
                 onTabChange={setEmployeeListTab}
+                activeDateText={`${activeDay} ${monthName} ${year}`}
+              />
+            )}
+
+            {/* Discipline Ranking Component */}
+            {employees.length > 0 && activeMainSubTab === 'ranking' && (
+              <DisciplineRanking
+                currentDayEmployees={employees}
+                allDailyRecords={allDailyRecords}
+                activeDateText={`${activeDay} ${monthName} ${year}`}
+                monthName={monthName}
+                year={year}
+                monthNumber={monthNumber}
               />
             )}
 
@@ -420,6 +514,18 @@ export default function App() {
               year={year}
             />
           </>
+        ) : viewMode === 'ranking' ? (
+          /* Dedicated Discipline Ranking View */
+          <div className="space-y-5">
+            <DisciplineRanking
+              currentDayEmployees={employees}
+              allDailyRecords={allDailyRecords}
+              activeDateText={`${activeDay} ${monthName} ${year}`}
+              monthName={monthName}
+              year={year}
+              monthNumber={monthNumber}
+            />
+          </div>
         ) : (
           /* Monthly & Yearly Aggregation Reports */
           <MonthlyYearlyReports

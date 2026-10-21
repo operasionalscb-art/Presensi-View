@@ -24,6 +24,11 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
   const [jobLevel, setJobLevel] = useState('Staff');
   const [joinDate, setJoinDate] = useState('');
   const [employmentStatus, setEmploymentStatus] = useState('Contract');
+  const [shift, setShift] = useState('Guru');
+  const [scheduleIn, setScheduleIn] = useState('07:00');
+  const [scheduleOut, setScheduleOut] = useState('16:00');
+  const [checkIn, setCheckIn] = useState('06:50');
+  const [checkOut, setCheckOut] = useState('16:00');
   const [statusCode, setStatusCode] = useState<'H' | 'H/LI/NCO' | 'I' | 'S' | 'C' | 'A' | 'SHIFT'>('H');
   const [keterangan, setKeterangan] = useState('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -46,22 +51,46 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
     }
 
     const rawStatus = statusCode === 'SHIFT' ? '' : statusCode;
-    const normalizedStatus: NormalizedStatus = normalizeAttendanceStatus(rawStatus, keterangan);
-    const lateMinutes = extractLateMinutes(keterangan);
+    let normalizedStatus: NormalizedStatus = normalizeAttendanceStatus(rawStatus, keterangan);
+    let lateMinutes = extractLateMinutes(keterangan);
+
+    // Calculate late minutes from times if present
+    if (checkIn && scheduleIn) {
+      const matchIn = checkIn.match(/(\d{1,2})[:.](\d{2})/);
+      const matchSched = scheduleIn.match(/(\d{1,2})[:.](\d{2})/);
+      if (matchIn && matchSched) {
+        const inMins = parseInt(matchIn[1], 10) * 60 + parseInt(matchIn[2], 10);
+        const schedMins = parseInt(matchSched[1], 10) * 60 + parseInt(matchSched[2], 10);
+        const diff = inMins - schedMins;
+        if (diff > 0) {
+          lateMinutes = diff;
+          if (normalizedStatus === 'hadir') {
+            normalizedStatus = 'telat';
+          }
+        }
+      }
+    }
+
+    const finalKet = keterangan.trim() || (lateMinutes && lateMinutes > 0 ? `Telat ${lateMinutes} menit` : normalizedStatus === 'hadir' ? 'Tepat Waktu' : '');
 
     const newRecord: EmployeeRecord = {
       no: currentCount + 1,
       employeeId: employeeId.trim(),
       name: name.trim(),
+      shift: shift.trim() || 'Guru',
+      scheduleIn: scheduleIn.trim() || '07:00',
+      scheduleOut: scheduleOut.trim() || '16:00',
+      checkIn: checkIn.trim() || undefined,
+      checkOut: checkOut.trim() || undefined,
       department: department.trim(),
       branch: branch.trim(),
-      jobPosition: jobPosition.trim(),
+      jobPosition: jobPosition.trim() || 'Staff',
       jobLevel: jobLevel.trim(),
-      joinDate: joinDate.trim(),
+      joinDate: joinDate.trim() || '-',
       employmentStatus: employmentStatus.trim(),
       rawStatus,
       normalizedStatus,
-      keterangan: keterangan.trim(),
+      keterangan: finalKet,
       lateMinutes,
     };
 
@@ -192,6 +221,73 @@ export const AddRecordModal: React.FC<AddRecordModalProps> = ({
                 <option value="Contract">Contract</option>
                 <option value="Permanent">Permanent</option>
               </select>
+            </div>
+          </div>
+
+          {/* Shift & Time Details */}
+          <div className="grid grid-cols-3 gap-2.5 bg-slate-50 dark:bg-slate-800/50 p-2.5 rounded-xl border border-slate-200 dark:border-slate-700">
+            <div>
+              <label className="block text-[10px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                Shift
+              </label>
+              <input
+                type="text"
+                value={shift}
+                onChange={(e) => setShift(e.target.value)}
+                placeholder="Guru / Pembina"
+                className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-slate-800 dark:text-slate-200 outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                Jadwal Masuk
+              </label>
+              <input
+                type="text"
+                value={scheduleIn}
+                onChange={(e) => setScheduleIn(e.target.value)}
+                placeholder="07:00"
+                className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-slate-800 dark:text-slate-200 outline-none font-mono"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                Jadwal Keluar
+              </label>
+              <input
+                type="text"
+                value={scheduleOut}
+                onChange={(e) => setScheduleOut(e.target.value)}
+                placeholder="16:00"
+                className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-slate-800 dark:text-slate-200 outline-none font-mono"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 bg-slate-50 dark:bg-slate-800/50 p-2.5 rounded-xl border border-slate-200 dark:border-slate-700">
+            <div>
+              <label className="block text-[10px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                Scan Masuk (Check-In)
+              </label>
+              <input
+                type="text"
+                value={checkIn}
+                onChange={(e) => setCheckIn(e.target.value)}
+                placeholder="06:50"
+                className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-slate-800 dark:text-slate-200 outline-none font-mono"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                Scan Pulang (Check-Out)
+              </label>
+              <input
+                type="text"
+                value={checkOut}
+                onChange={(e) => setCheckOut(e.target.value)}
+                placeholder="16:00"
+                className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-slate-800 dark:text-slate-200 outline-none font-mono"
+              />
             </div>
           </div>
 

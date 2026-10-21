@@ -78,6 +78,56 @@ export function extractLateMinutes(keterangan: string): number | undefined {
   return undefined;
 }
 
+export function formatTimeValue(val: any): string {
+  if (val === null || val === undefined || val === '') return '';
+  if (typeof val === 'number') {
+    // If it's a decimal < 1 (Excel fraction of a day)
+    if (val >= 0 && val < 1) {
+      const totalSeconds = Math.round(val * 86400);
+      const hours = Math.floor(totalSeconds / 3600);
+      const minutes = Math.floor((totalSeconds % 3600) / 60);
+      return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+    }
+    // If it's an Excel serial date
+    if (val > 30000 && val < 60000) {
+      const d = new Date(Math.round((val - 25569) * 86400 * 1000));
+      return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
+    }
+  }
+  const s = String(val).trim();
+  const timeMatch = s.match(/\b([01]?\d|2[0-3])[:.]([0-5]\d)(?::[0-5]\d)?\b/);
+  if (timeMatch) {
+    return `${timeMatch[1].padStart(2, '0')}:${timeMatch[2]}`;
+  }
+  return s;
+}
+
+export function calculateMinutesLate(checkIn?: string, scheduleIn?: string): number {
+  if (!checkIn || !scheduleIn) return 0;
+  const inStr = formatTimeValue(checkIn);
+  const schedStr = formatTimeValue(scheduleIn);
+  const mIn = inStr.match(/^(\d{1,2}):(\d{2})$/);
+  const mSched = schedStr.match(/^(\d{1,2}):(\d{2})$/);
+  if (!mIn || !mSched) return 0;
+  const inMins = parseInt(mIn[1], 10) * 60 + parseInt(mIn[2], 10);
+  const schedMins = parseInt(mSched[1], 10) * 60 + parseInt(mSched[2], 10);
+  const diff = inMins - schedMins;
+  return diff > 0 ? diff : 0;
+}
+
+export function calculateEarlyLeaveMinutes(checkOut?: string, scheduleOut?: string): number {
+  if (!checkOut || !scheduleOut) return 0;
+  const outStr = formatTimeValue(checkOut);
+  const schedStr = formatTimeValue(scheduleOut);
+  const mOut = outStr.match(/^(\d{1,2}):(\d{2})$/);
+  const mSched = schedStr.match(/^(\d{1,2}):(\d{2})$/);
+  if (!mOut || !mSched) return 0;
+  const outMins = parseInt(mOut[1], 10) * 60 + parseInt(mOut[2], 10);
+  const schedMins = parseInt(mSched[1], 10) * 60 + parseInt(mSched[2], 10);
+  const diff = schedMins - outMins;
+  return diff > 0 ? diff : 0;
+}
+
 const INDO_MONTHS: Record<string, number> = {
   januari: 1, januari2024: 1, jan: 1, january: 1,
   februari: 2, feb: 2, february: 2,
@@ -279,6 +329,11 @@ export function parseComprehensiveAttendance(
   let colStatusEmp = -1;
   let colKeterangan = -1;
   let colRowDate = -1;
+  let colShift = -1;
+  let colScheduleIn = -1;
+  let colScheduleOut = -1;
+  let colCheckIn = -1;
+  let colCheckOut = -1;
 
   // Single attendance column candidate
   let colSingleAttendance = -1;
@@ -287,13 +342,14 @@ export function parseComprehensiveAttendance(
   const matrixDayColumns: { colIndex: number; dateStr: string; dayNumber: number }[] = [];
 
   headerRow.forEach((col, idx) => {
-    const lower = col.toLowerCase();
-    const subCol = subHeaderRow[idx] ? subHeaderRow[idx].toLowerCase() : '';
+    const lower = col.toLowerCase().trim();
+    const subCol = subHeaderRow[idx] ? subHeaderRow[idx].toLowerCase().trim() : '';
 
     if (lower === 'no' || lower === 'no.' || lower === 'nomor') {
       colNo = idx;
     } else if (
       lower.includes('employee id') ||
+      lower === 'employee' ||
       lower === 'nik' ||
       lower.includes('id karyawan') ||
       lower.includes('id pegawai') ||
@@ -302,6 +358,7 @@ export function parseComprehensiveAttendance(
     ) {
       colId = idx;
     } else if (
+      lower.includes('full name') ||
       lower === 'name' ||
       lower === 'nama' ||
       lower === 'nama lengkap' ||
@@ -310,7 +367,13 @@ export function parseComprehensiveAttendance(
       (lower.includes('nama') && !lower.includes('sekolah') && !lower.includes('perusahaan'))
     ) {
       colName = idx;
-    } else if (lower.includes('department') || lower.includes('departemen') || lower.includes('divisi') || lower.includes('bagian')) {
+    } else if (
+      lower.includes('department') ||
+      lower.includes('departemen') ||
+      lower.includes('organ') ||
+      lower.includes('divisi') ||
+      lower.includes('bagian')
+    ) {
       colDept = idx;
     } else if (lower.includes('branch') || lower.includes('cabang') || lower.includes('lokasi')) {
       colBranch = idx;
@@ -320,13 +383,24 @@ export function parseComprehensiveAttendance(
       colLevel = idx;
     } else if (lower.includes('join date') || lower.includes('tgl masuk') || lower.includes('tanggal masuk')) {
       colJoinDate = idx;
-    } else if (lower.includes('employment status') || lower.includes('status kerja') || lower.includes('status pegawai')) {
+    } else if (lower.includes('employment status') || lower.includes('employm') || lower.includes('status kerja') || lower.includes('status pegawai')) {
       colStatusEmp = idx;
     } else if (lower.includes('keterangan') || lower.includes('alasan') || lower.includes('notes') || lower.includes('catatan') || lower === 'ket') {
       colKeterangan = idx;
-    } else if (lower === 'tanggal' || lower === 'tgl' || lower === 'date' || lower === 'tgl presensi') {
+    } else if (lower === 'tanggal' || lower === 'tgl' || lower.includes('date') || lower === 'tgl presensi') {
       colRowDate = idx;
+    } else if (lower === 'shift' || lower.includes('shift')) {
+      colShift = idx;
+    } else if (lower.includes('schedule in') || lower.includes('jadwal masuk') || lower.includes('jam masuk')) {
+      colScheduleIn = idx;
+    } else if (lower.includes('schedule out') || lower.includes('jadwal pulang') || lower.includes('jadwal keluar') || lower.includes('jam keluar')) {
+      colScheduleOut = idx;
+    } else if (lower.includes('check in') || lower.includes('scan masuk') || lower.includes('check in.') || lower === 'in') {
+      colCheckIn = idx;
+    } else if (lower.includes('check out') || lower.includes('scan pulang') || lower.includes('scan keluar') || lower.includes('check ou') || lower === 'out') {
+      colCheckOut = idx;
     } else if (
+      lower.includes('attendan') ||
       lower === 'status' ||
       lower === 'presensi' ||
       lower === 'kehadiran' ||
@@ -429,10 +503,22 @@ export function parseComprehensiveAttendance(
         const normalizedStatus = normalizeAttendanceStatus(rawStatus, keterangan);
         const lateMinutes = extractLateMinutes(keterangan);
 
+        const shift = colShift !== -1 ? String(row[colShift] || '').trim() : undefined;
+        const scheduleIn = colScheduleIn !== -1 ? formatTimeValue(row[colScheduleIn]) : undefined;
+        const scheduleOut = colScheduleOut !== -1 ? formatTimeValue(row[colScheduleOut]) : undefined;
+        const checkIn = colCheckIn !== -1 ? formatTimeValue(row[colCheckIn]) : undefined;
+        const checkOut = colCheckOut !== -1 ? formatTimeValue(row[colCheckOut]) : undefined;
+
         dayEmployees.push({
           no: dayEmployees.length + 1,
           employeeId: id || `EMP-${dayEmployees.length + 1}`,
           name: name || id,
+          date: dateStr,
+          shift,
+          scheduleIn,
+          scheduleOut,
+          checkIn,
+          checkOut,
           department: colDept !== -1 ? String(row[colDept] || 'Umum').trim() : 'Umum',
           branch: colBranch !== -1 ? String(row[colBranch] || 'Pusat').trim() : 'Pusat',
           jobPosition: colPosition !== -1 ? String(row[colPosition] || 'Staff').trim() : 'Staff',
@@ -497,8 +583,28 @@ export function parseComprehensiveAttendance(
 
       const rawStatus = colSingleAttendance !== -1 ? String(row[colSingleAttendance] || '').trim() : '';
       const keterangan = colKeterangan !== -1 ? String(row[colKeterangan] || '').trim() : '';
-      const normalizedStatus = normalizeAttendanceStatus(rawStatus, keterangan);
-      const lateMinutes = extractLateMinutes(keterangan);
+      const shift = colShift !== -1 ? String(row[colShift] || '').trim() : undefined;
+      const scheduleIn = colScheduleIn !== -1 ? formatTimeValue(row[colScheduleIn]) : undefined;
+      const scheduleOut = colScheduleOut !== -1 ? formatTimeValue(row[colScheduleOut]) : undefined;
+      const checkIn = colCheckIn !== -1 ? formatTimeValue(row[colCheckIn]) : undefined;
+      const checkOut = colCheckOut !== -1 ? formatTimeValue(row[colCheckOut]) : undefined;
+      const lateFromTime = calculateMinutesLate(checkIn, scheduleIn);
+      const parsedLate = extractLateMinutes(keterangan);
+      const lateMinutes = lateFromTime > 0 ? lateFromTime : parsedLate;
+      const earlyLeaveMinutes = calculateEarlyLeaveMinutes(checkOut, scheduleOut);
+
+      let normalizedStatus = normalizeAttendanceStatus(rawStatus, keterangan);
+      if (normalizedStatus === 'hadir' && lateMinutes && lateMinutes > 0) {
+        normalizedStatus = 'telat';
+      }
+      let finalKeterangan = keterangan;
+      if (!finalKeterangan) {
+        if (lateMinutes && lateMinutes > 0) {
+          finalKeterangan = `Telat ${lateMinutes} menit`;
+        } else if (normalizedStatus === 'hadir') {
+          finalKeterangan = 'Tepat Waktu';
+        }
+      }
 
       if (!dailyRecords[dateStr]) {
         dailyRecords[dateStr] = [];
@@ -508,6 +614,12 @@ export function parseComprehensiveAttendance(
         no: dailyRecords[dateStr].length + 1,
         employeeId: id || `EMP-${dailyRecords[dateStr].length + 1}`,
         name: name || id,
+        date: dateStr,
+        shift,
+        scheduleIn,
+        scheduleOut,
+        checkIn,
+        checkOut,
         department: colDept !== -1 ? String(row[colDept] || 'Umum').trim() : 'Umum',
         branch: colBranch !== -1 ? String(row[colBranch] || 'Pusat').trim() : 'Pusat',
         jobPosition: colPosition !== -1 ? String(row[colPosition] || 'Staff').trim() : 'Staff',
@@ -516,8 +628,9 @@ export function parseComprehensiveAttendance(
         employmentStatus: colStatusEmp !== -1 ? String(row[colStatusEmp] || 'Contract').trim() : 'Contract',
         rawStatus,
         normalizedStatus,
-        keterangan,
+        keterangan: finalKeterangan,
         lateMinutes,
+        earlyLeaveMinutes: earlyLeaveMinutes > 0 ? earlyLeaveMinutes : undefined,
       });
     }
 
@@ -554,7 +667,12 @@ export function parseComprehensiveAttendance(
           idx !== colLevel &&
           idx !== colJoinDate &&
           idx !== colStatusEmp &&
-          idx !== colKeterangan
+          idx !== colKeterangan &&
+          idx !== colShift &&
+          idx !== colScheduleIn &&
+          idx !== colScheduleOut &&
+          idx !== colCheckIn &&
+          idx !== colCheckOut
         ) {
           colSingleAttendance = idx;
           break;
@@ -566,7 +684,7 @@ export function parseComprehensiveAttendance(
 
   if (colKeterangan === -1) {
     const kIdx = headerRow.findIndex((c) => c.toLowerCase().includes('keterangan') || c.toLowerCase().includes('alasan'));
-    colKeterangan = kIdx !== -1 ? kIdx : colSingleAttendance + 1;
+    colKeterangan = kIdx !== -1 ? kIdx : -1;
   }
 
   const singleDayEmployees: EmployeeRecord[] = [];
@@ -592,14 +710,41 @@ export function parseComprehensiveAttendance(
     const employmentStatus = colStatusEmp !== -1 ? String(row[colStatusEmp] || 'Contract').trim() : 'Contract';
     const rawStatus = colSingleAttendance !== -1 ? String(row[colSingleAttendance] || '').trim() : '';
     const keterangan = colKeterangan !== -1 ? String(row[colKeterangan] || '').trim() : '';
+    const shift = colShift !== -1 ? String(row[colShift] || '').trim() : undefined;
+    const scheduleIn = colScheduleIn !== -1 ? formatTimeValue(row[colScheduleIn]) : undefined;
+    const scheduleOut = colScheduleOut !== -1 ? formatTimeValue(row[colScheduleOut]) : undefined;
+    const checkIn = colCheckIn !== -1 ? formatTimeValue(row[colCheckIn]) : undefined;
+    const checkOut = colCheckOut !== -1 ? formatTimeValue(row[colCheckOut]) : undefined;
+    const rowDate = colRowDate !== -1 ? (parseDateToIso(row[colRowDate], activeYear, activeMonth) || String(row[colRowDate] || '').trim()) : undefined;
 
-    const normalizedStatus = normalizeAttendanceStatus(rawStatus, keterangan);
-    const lateMinutes = extractLateMinutes(keterangan);
+    const lateFromTime = calculateMinutesLate(checkIn, scheduleIn);
+    const parsedLate = extractLateMinutes(keterangan);
+    const lateMinutes = lateFromTime > 0 ? lateFromTime : parsedLate;
+    const earlyLeaveMinutes = calculateEarlyLeaveMinutes(checkOut, scheduleOut);
+
+    let normalizedStatus = normalizeAttendanceStatus(rawStatus, keterangan);
+    if (normalizedStatus === 'hadir' && lateMinutes && lateMinutes > 0) {
+      normalizedStatus = 'telat';
+    }
+    let finalKeterangan = keterangan;
+    if (!finalKeterangan) {
+      if (lateMinutes && lateMinutes > 0) {
+        finalKeterangan = `Telat ${lateMinutes} menit`;
+      } else if (normalizedStatus === 'hadir') {
+        finalKeterangan = 'Tepat Waktu';
+      }
+    }
 
     singleDayEmployees.push({
       no,
       employeeId: id || `EMP-${singleDayEmployees.length + 1}`,
       name: name || id,
+      date: rowDate || fallbackDate,
+      shift,
+      scheduleIn,
+      scheduleOut,
+      checkIn,
+      checkOut,
       department,
       branch,
       jobPosition,
@@ -608,8 +753,9 @@ export function parseComprehensiveAttendance(
       employmentStatus,
       rawStatus,
       normalizedStatus,
-      keterangan,
+      keterangan: finalKeterangan,
       lateMinutes,
+      earlyLeaveMinutes: earlyLeaveMinutes > 0 ? earlyLeaveMinutes : undefined,
     });
   }
 
