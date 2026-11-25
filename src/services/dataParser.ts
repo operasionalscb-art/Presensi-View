@@ -128,8 +128,23 @@ export function calculateEarlyLeaveMinutes(checkOut?: string, scheduleOut?: stri
   return diff > 0 ? diff : 0;
 }
 
+const MONTH_PATTERNS: Array<{ pattern: RegExp; month: number }> = [
+  { pattern: /(?:^|[^a-z])(januari|january|jan)(?:$|[^a-z])/i, month: 1 },
+  { pattern: /(?:^|[^a-z])(februari|february|feb)(?:$|[^a-z])/i, month: 2 },
+  { pattern: /(?:^|[^a-z])(maret|march|mar)(?:$|[^a-z])/i, month: 3 },
+  { pattern: /(?:^|[^a-z])(april|apr)(?:$|[^a-z])/i, month: 4 },
+  { pattern: /(?:^|[^a-z])(mei|may)(?:$|[^a-z])/i, month: 5 },
+  { pattern: /(?:^|[^a-z])(juni|june|jun)(?:$|[^a-z])/i, month: 6 },
+  { pattern: /(?:^|[^a-z])(juli|july|jul)(?:$|[^a-z])/i, month: 7 },
+  { pattern: /(?:^|[^a-z])(agustus|august|agt|ags|aug)(?:$|[^a-z])/i, month: 8 },
+  { pattern: /(?:^|[^a-z])(september|sept|sep)(?:$|[^a-z])/i, month: 9 },
+  { pattern: /(?:^|[^a-z])(oktober|october|okt|oct)(?:$|[^a-z])/i, month: 10 },
+  { pattern: /(?:^|[^a-z])(november|nov)(?:$|[^a-z])/i, month: 11 },
+  { pattern: /(?:^|[^a-z])(desember|december|des|dec)(?:$|[^a-z])/i, month: 12 },
+];
+
 const INDO_MONTHS: Record<string, number> = {
-  januari: 1, januari2024: 1, jan: 1, january: 1,
+  januari: 1, jan: 1, january: 1,
   februari: 2, feb: 2, february: 2,
   maret: 3, mar: 3, march: 3,
   april: 4, apr: 4,
@@ -143,14 +158,36 @@ const INDO_MONTHS: Record<string, number> = {
   desember: 12, des: 12, dec: 12, december: 12,
 };
 
+function findMonthInText(text: string): number | null {
+  if (!text) return null;
+  for (const { pattern, month } of MONTH_PATTERNS) {
+    if (pattern.test(text)) {
+      return month;
+    }
+  }
+  return null;
+}
+
+function getLocalTodayIso(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
+
 /**
  * Attempt to extract a date string "YYYY-MM-DD" from any value (string, Excel serial number, Date)
  */
 export function parseDateToIso(value: any, referenceYear?: number, referenceMonth?: number): string | null {
   if (value === null || value === undefined || value === '') return null;
 
-  // If already Date instance
+  // If already Date instance (add 12h buffer when near UTC midnight to avoid negative-UTC date shifts)
   if (value instanceof Date && !isNaN(value.getTime())) {
+    const isNearUtcMidnight =
+      (value.getUTCHours() === 23 && value.getUTCMinutes() >= 50) ||
+      (value.getUTCHours() === 0 && value.getUTCMinutes() <= 10);
+    if (isNearUtcMidnight) {
+      const shifted = new Date(value.getTime() + 12 * 3600 * 1000);
+      return `${shifted.getUTCFullYear()}-${String(shifted.getUTCMonth() + 1).padStart(2, '0')}-${String(shifted.getUTCDate()).padStart(2, '0')}`;
+    }
     const y = value.getFullYear();
     const m = String(value.getMonth() + 1).padStart(2, '0');
     const d = String(value.getDate()).padStart(2, '0');
@@ -161,17 +198,19 @@ export function parseDateToIso(value: any, referenceYear?: number, referenceMont
   if (typeof value === 'number' && value > 35000 && value < 60000) {
     const excelEpoch = new Date(Math.round((value - 25569) * 86400 * 1000));
     if (!isNaN(excelEpoch.getTime())) {
-      const y = excelEpoch.getFullYear();
-      const m = String(excelEpoch.getMonth() + 1).padStart(2, '0');
-      const d = String(excelEpoch.getDate()).padStart(2, '0');
+      const y = excelEpoch.getUTCFullYear();
+      const m = String(excelEpoch.getUTCMonth() + 1).padStart(2, '0');
+      const d = String(excelEpoch.getUTCDate()).padStart(2, '0');
       return `${y}-${m}-${d}`;
     }
   }
 
   const str = String(value).trim();
+  // Strip common file extension if parsing a filename
+  const cleanStr = str.replace(/\.(xlsx|xls|csv)$/i, '').trim();
 
-  // Match ISO YYYY-MM-DD
-  const isoMatch = str.match(/\b(20\d\d)[-/](0?[1-9]|1[0-2])[-/](0?[1-9]|[12]\d|3[01])\b/);
+  // Match ISO YYYY-MM-DD (supports -, /, ., _)
+  const isoMatch = cleanStr.match(/(?:^|[^0-9])(20\d\d)[-/._](0?[1-9]|1[0-2])[-/._](0?[1-9]|[12]\d|3[01])(?:$|[^0-9])/);
   if (isoMatch) {
     const y = isoMatch[1];
     const m = isoMatch[2].padStart(2, '0');
@@ -179,30 +218,60 @@ export function parseDateToIso(value: any, referenceYear?: number, referenceMont
     return `${y}-${m}-${d}`;
   }
 
-  // Match DD/MM/YYYY or DD-MM-YYYY
-  const dmyMatch = str.match(/\b(0?[1-9]|[12]\d|3[01])[-/](0?[1-9]|1[0-2])[-/](20\d\d)\b/);
-  if (dmyMatch) {
-    const d = dmyMatch[1].padStart(2, '0');
-    const m = dmyMatch[2].padStart(2, '0');
-    const y = dmyMatch[3];
-    return `${y}-${m}-${d}`;
+  // Match DD/MM/YYYY or MM/DD/YYYY (supports -, /, ., _)
+  const slash4Match = cleanStr.match(/(?:^|[^0-9])(0?[1-9]|[12]\d|3[01])[-/._](0?[1-9]|[12]\d|3[01])[-/._](20\d\d)(?:$|[^0-9])/);
+  if (slash4Match) {
+    const p1 = parseInt(slash4Match[1], 10);
+    const p2 = parseInt(slash4Match[2], 10);
+    const y = slash4Match[3];
+    if (p2 <= 12 && p1 <= 31 && !(p1 <= 12 && p2 > 12)) {
+      // Standard DD/MM/YYYY
+      return `${y}-${String(p2).padStart(2, '0')}-${String(p1).padStart(2, '0')}`;
+    }
+    if (p1 <= 12 && p2 > 12 && p2 <= 31) {
+      // US MM/DD/YYYY
+      return `${y}-${String(p1).padStart(2, '0')}-${String(p2).padStart(2, '0')}`;
+    }
   }
 
-  // Match text like "12 Oktober 2026" or "12 Oct 2026"
-  const textDateMatch = str.match(/\b(0?[1-9]|[12]\d|3[01])\s+([a-zA-Z]+)(?:\s+(20\d\d))?\b/);
+  // Match 2-digit year DD/MM/YY or MM/DD/YY (e.g. SheetJS raw:false "11/24/26" or "24/11/26")
+  const slash2Match = cleanStr.match(/(?:^|[^0-9])(0?[1-9]|[12]\d|3[01])[-/._](0?[1-9]|[12]\d|3[01])[-/._](\d{2})(?:$|[^0-9])/);
+  if (slash2Match) {
+    const p1 = parseInt(slash2Match[1], 10);
+    const p2 = parseInt(slash2Match[2], 10);
+    const y = `20${slash2Match[3]}`;
+    if (p1 <= 12 && p2 > 12 && p2 <= 31) {
+      // US MM/DD/YY
+      return `${y}-${String(p1).padStart(2, '0')}-${String(p2).padStart(2, '0')}`;
+    }
+    if (p2 <= 12 && p1 > 12 && p1 <= 31) {
+      // ID DD/MM/YY
+      return `${y}-${String(p2).padStart(2, '0')}-${String(p1).padStart(2, '0')}`;
+    }
+    if (p1 <= 12 && p2 <= 12) {
+      // Ambiguous: prefer referenceMonth if it matches one of them, else DD/MM/YY
+      if (referenceMonth && p1 === referenceMonth && p2 !== referenceMonth) {
+        return `${y}-${String(p1).padStart(2, '0')}-${String(p2).padStart(2, '0')}`;
+      }
+      return `${y}-${String(p2).padStart(2, '0')}-${String(p1).padStart(2, '0')}`;
+    }
+  }
+
+  // Match text like "12 Oktober 2026", "12 Oct 2026", "24Nov2026", "24_Nov"
+  const textDateMatch = cleanStr.match(/(?:^|[^0-9])(0?[1-9]|[12]\d|3[01])[\s\-_.]*([a-zA-Z]{3,12})(?:[\s\-_.]*(20\d\d))?(?:$|[^a-zA-Z0-9])/);
   if (textDateMatch) {
     const d = textDateMatch[1].padStart(2, '0');
     const monthKey = textDateMatch[2].toLowerCase();
     const mNum = INDO_MONTHS[monthKey];
     if (mNum) {
-      const y = textDateMatch[3] ? textDateMatch[3] : String(referenceYear || 2026);
+      const y = textDateMatch[3] ? textDateMatch[3] : String(referenceYear || new Date().getFullYear());
       return `${y}-${String(mNum).padStart(2, '0')}-${d}`;
     }
   }
 
   // If just a single day number "12" and we have reference year and month
-  if (referenceYear && referenceMonth && /^(?:0?[1-9]|[12]\d|3[01])$/.test(str)) {
-    const d = parseInt(str, 10);
+  if (referenceYear && referenceMonth && /^(?:0?[1-9]|[12]\d|3[01])$/.test(cleanStr)) {
+    const d = parseInt(cleanStr, 10);
     return `${referenceYear}-${String(referenceMonth).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
   }
 
@@ -220,28 +289,46 @@ export interface ParsedAttendanceResult {
 }
 
 /**
- * Scan top rows of spreadsheet to detect overall document metadata like Month and Year
+ * Scan top metadata rows (above employee data rows) and filename to detect Year and Month.
+ * Uses word-boundary matching so employee names (e.g. "Sumarni") never falsely match month names ("mar").
  */
-function scanSheetMetadata(rows: any[][], fileName?: string): { year: number; month: number } {
-  let detectedYear = 2026;
-  let detectedMonth = 10; // Default October
+function scanSheetMetadata(
+  headerOnlyRows: any[][],
+  fileName?: string,
+  fallbackDate?: string
+): { year: number; month: number } {
+  const now = new Date();
+  let detectedYear = now.getFullYear();
+  let detectedMonth = now.getMonth() + 1;
 
-  const searchPool = [
-    ...(fileName ? [fileName] : []),
-    ...rows.slice(0, 10).map((r) => r.map((c) => String(c || '')).join(' ')),
-  ].join(' ').toLowerCase();
+  if (fallbackDate && /^\d{4}-\d{2}-\d{2}$/.test(fallbackDate)) {
+    const [fy, fm] = fallbackDate.split('-').map((n) => parseInt(n, 10));
+    if (fy >= 2000 && fy <= 2100 && fm >= 1 && fm <= 12) {
+      detectedYear = fy;
+      detectedMonth = fm;
+    }
+  }
+
+  const headerText = headerOnlyRows
+    .map((r) => (Array.isArray(r) ? r.map((c) => String(c || '')).join(' ') : ''))
+    .join(' ');
+  const fileText = (fileName || '').replace(/\.(xlsx|xls|csv)$/i, '');
+  const combinedPool = `${fileText} ${headerText}`;
 
   // Search for year (2020 - 2035)
-  const yMatch = searchPool.match(/\b(202[0-9]|203[0-5])\b/);
+  const yMatch = combinedPool.match(/\b(202[0-9]|203[0-5])\b/);
   if (yMatch) {
     detectedYear = parseInt(yMatch[1], 10);
   }
 
-  // Search for month name
-  for (const [name, num] of Object.entries(INDO_MONTHS)) {
-    if (searchPool.includes(name)) {
-      detectedMonth = num;
-      break;
+  // Prioritize explicit month in filename first, then header/title rows
+  const fileMonth = findMonthInText(fileText);
+  if (fileMonth) {
+    detectedMonth = fileMonth;
+  } else {
+    const headerMonth = findMonthInText(headerText);
+    if (headerMonth) {
+      detectedMonth = headerMonth;
     }
   }
 
@@ -270,14 +357,10 @@ export function parseComprehensiveAttendance(
       detectedDates: [],
       totalEmployees: 0,
       totalDays: 0,
-      primaryDate: options?.fallbackDate || new Date().toISOString().split('T')[0],
+      primaryDate: options?.fallbackDate || getLocalTodayIso(),
       primaryEmployees: [],
     };
   }
-
-  const meta = scanSheetMetadata(rows, options?.fileName);
-  const activeYear = options?.defaultYear || meta.year;
-  const activeMonth = options?.defaultMonth || meta.month;
 
   // 1. Locate the true Table Header Row by score (avoiding false hits on title/metadata rows)
   let bestHeaderIndex = 0;
@@ -315,7 +398,24 @@ export function parseComprehensiveAttendance(
   }
 
   const headerRow = rows[bestHeaderIndex].map((c) => String(c || '').trim());
-  const subHeaderRow = rows[bestHeaderIndex + 1] ? rows[bestHeaderIndex + 1].map((c) => String(c || '').trim()) : [];
+  const rawNextRow = rows[bestHeaderIndex + 1] ? rows[bestHeaderIndex + 1].map((c) => String(c || '').trim()) : [];
+
+  // Only treat next row as a subheader if it does not look like an employee record (e.g. name & id empty, or day numbers)
+  let hasSubHeader = false;
+  if (rawNextRow.length > 0) {
+    const firstNonEmpty = rawNextRow.filter(Boolean);
+    const looksLikeDayRow = firstNonEmpty.length > 0 && firstNonEmpty.every((v) => /^\d{1,2}$/.test(v) || findMonthInText(v) !== null);
+    if (looksLikeDayRow) {
+      hasSubHeader = true;
+    }
+  }
+  const subHeaderRow = hasSubHeader ? rawNextRow : [];
+
+  // Determine metadata only from title + header rows (NEVER employee rows)
+  const metaRowsLimit = hasSubHeader ? bestHeaderIndex + 2 : bestHeaderIndex + 1;
+  const meta = scanSheetMetadata(rows.slice(0, metaRowsLimit), options?.fileName, options?.fallbackDate);
+  const activeYear = options?.defaultYear || meta.year;
+  const activeMonth = options?.defaultMonth || meta.month;
 
   // Column identification
   let colNo = -1;
@@ -345,8 +445,11 @@ export function parseComprehensiveAttendance(
     const lower = col.toLowerCase().trim();
     const subCol = subHeaderRow[idx] ? subHeaderRow[idx].toLowerCase().trim() : '';
 
+    let isKnownMetaCol = false;
+
     if (lower === 'no' || lower === 'no.' || lower === 'nomor') {
       colNo = idx;
+      isKnownMetaCol = true;
     } else if (
       lower.includes('employee id') ||
       lower === 'employee' ||
@@ -357,6 +460,7 @@ export function parseComprehensiveAttendance(
       lower === 'id'
     ) {
       colId = idx;
+      isKnownMetaCol = true;
     } else if (
       lower.includes('full name') ||
       lower === 'name' ||
@@ -367,6 +471,7 @@ export function parseComprehensiveAttendance(
       (lower.includes('nama') && !lower.includes('sekolah') && !lower.includes('perusahaan'))
     ) {
       colName = idx;
+      isKnownMetaCol = true;
     } else if (
       lower.includes('department') ||
       lower.includes('departemen') ||
@@ -375,30 +480,43 @@ export function parseComprehensiveAttendance(
       lower.includes('bagian')
     ) {
       colDept = idx;
+      isKnownMetaCol = true;
     } else if (lower.includes('branch') || lower.includes('cabang') || lower.includes('lokasi')) {
       colBranch = idx;
+      isKnownMetaCol = true;
     } else if (lower.includes('job position') || lower.includes('jabatan') || lower.includes('posisi') || lower.includes('position')) {
       colPosition = idx;
+      isKnownMetaCol = true;
     } else if (lower.includes('job level') || lower.includes('level')) {
       colLevel = idx;
+      isKnownMetaCol = true;
     } else if (lower.includes('join date') || lower.includes('tgl masuk') || lower.includes('tanggal masuk')) {
       colJoinDate = idx;
+      isKnownMetaCol = true;
     } else if (lower.includes('employment status') || lower.includes('employm') || lower.includes('status kerja') || lower.includes('status pegawai')) {
       colStatusEmp = idx;
+      isKnownMetaCol = true;
     } else if (lower.includes('keterangan') || lower.includes('alasan') || lower.includes('notes') || lower.includes('catatan') || lower === 'ket') {
       colKeterangan = idx;
+      isKnownMetaCol = true;
     } else if (lower === 'tanggal' || lower === 'tgl' || lower.includes('date') || lower === 'tgl presensi') {
       colRowDate = idx;
+      isKnownMetaCol = true;
     } else if (lower === 'shift' || lower.includes('shift')) {
       colShift = idx;
+      isKnownMetaCol = true;
     } else if (lower.includes('schedule in') || lower.includes('jadwal masuk') || lower.includes('jam masuk')) {
       colScheduleIn = idx;
+      isKnownMetaCol = true;
     } else if (lower.includes('schedule out') || lower.includes('jadwal pulang') || lower.includes('jadwal keluar') || lower.includes('jam keluar')) {
       colScheduleOut = idx;
+      isKnownMetaCol = true;
     } else if (lower.includes('check in') || lower.includes('scan masuk') || lower.includes('check in.') || lower === 'in') {
       colCheckIn = idx;
+      isKnownMetaCol = true;
     } else if (lower.includes('check out') || lower.includes('scan pulang') || lower.includes('scan keluar') || lower.includes('check ou') || lower === 'out') {
       colCheckOut = idx;
+      isKnownMetaCol = true;
     } else if (
       lower.includes('attendan') ||
       lower === 'status' ||
@@ -413,14 +531,16 @@ export function parseComprehensiveAttendance(
       colSingleAttendance = idx;
     }
 
-    // Check for Day Number in Matrix (either in headerRow or subHeaderRow)
-    // E.g. column has '1', '2', '3' ... '31' or dates
-    const possibleDayStr = /^\d{1,2}$/.test(col) ? col : (/^\d{1,2}$/.test(subCol) ? subCol : '');
-    if (possibleDayStr) {
-      const dNum = parseInt(possibleDayStr, 10);
-      if (dNum >= 1 && dNum <= 31) {
-        const dStr = `${activeYear}-${String(activeMonth).padStart(2, '0')}-${String(dNum).padStart(2, '0')}`;
-        matrixDayColumns.push({ colIndex: idx, dateStr: dStr, dayNumber: dNum });
+    // Check for Day Number in Matrix (either in headerRow or subHeaderRow), NEVER from metadata columns like NO/ID
+    if (!isKnownMetaCol) {
+      const possibleDayStr = /^\d{1,2}$/.test(col) ? col : (/^\d{1,2}$/.test(subCol) ? subCol : '');
+      if (possibleDayStr) {
+        const dNum = parseInt(possibleDayStr, 10);
+        if (dNum >= 1 && dNum <= 31) {
+          const colMonth = findMonthInText(col) || activeMonth;
+          const dStr = `${activeYear}-${String(colMonth).padStart(2, '0')}-${String(dNum).padStart(2, '0')}`;
+          matrixDayColumns.push({ colIndex: idx, dateStr: dStr, dayNumber: dNum });
+        }
       }
     }
   });
@@ -438,25 +558,35 @@ export function parseComprehensiveAttendance(
 
   // Determine starting row for employee data
   let dataStartIndex = bestHeaderIndex + 1;
-  if (subHeaderRow.length > 0) {
-    // If subheader has day numbers or empty cells for name/id
-    const subName = subHeaderRow[colName] || '';
-    const subId = subHeaderRow[colId] || '';
-    if (!subName || !subId || /^\d+$/.test(subHeaderRow[matrixDayColumns[0]?.colIndex || -1] || '')) {
+  if (rawNextRow.length > 0) {
+    const subName = rawNextRow[colName] || '';
+    const subId = rawNextRow[colId] || '';
+    if (hasSubHeader || (!subName && !subId)) {
       dataStartIndex = bestHeaderIndex + 2;
     }
   }
 
-  // Scan single date candidate from header/subheader
+  // Scan single date candidate from header/subheader (combining Month header + Day subheader when present)
   let detectedSingleDate: string | null = null;
   if (colSingleAttendance !== -1) {
-    detectedSingleDate = parseDateToIso(headerRow[colSingleAttendance], activeYear, activeMonth);
+    const headerMonth = findMonthInText(headerRow[colSingleAttendance] || '');
+    detectedSingleDate = parseDateToIso(headerRow[colSingleAttendance], activeYear, headerMonth || activeMonth);
+    if (!detectedSingleDate && subHeaderRow[colSingleAttendance]) {
+      detectedSingleDate = parseDateToIso(subHeaderRow[colSingleAttendance], activeYear, headerMonth || activeMonth);
+    }
+  }
+  if (!detectedSingleDate && matrixDayColumns.length === 1) {
+    detectedSingleDate = matrixDayColumns[0].dateStr;
   }
   if (!detectedSingleDate) {
-    // Scan all cells in header rows for explicit date
+    const skipCols = new Set([colNo, colId, colName, colDept, colBranch, colPosition, colLevel, colJoinDate, colStatusEmp]);
+    // Scan title rows and non-metadata header/subheader cells for explicit date
     for (let r = 0; r < dataStartIndex; r++) {
-      for (const cell of rows[r] || []) {
-        const parsed = parseDateToIso(cell, activeYear, activeMonth);
+      const rowCells = rows[r] || [];
+      for (let c = 0; c < rowCells.length; c++) {
+        if (r >= bestHeaderIndex && skipCols.has(c)) continue;
+        const headerCtxMonth = findMonthInText(headerRow[c] || '') || activeMonth;
+        const parsed = parseDateToIso(rowCells[c], activeYear, headerCtxMonth);
         if (parsed) {
           detectedSingleDate = parsed;
           break;
@@ -466,13 +596,21 @@ export function parseComprehensiveAttendance(
     }
   }
 
-  // If still not found, check filename
+  // If still not found, check filename (full date first, then standalone day number e.g. "24.xlsx" or "Presensi 24.xlsx")
   if (!detectedSingleDate && options?.fileName) {
     detectedSingleDate = parseDateToIso(options.fileName, activeYear, activeMonth);
+    if (!detectedSingleDate) {
+      const cleanName = options.fileName.replace(/\.(xlsx|xls|csv)$/i, '').trim();
+      const dayOnlyMatch = cleanName.match(/(?:^|[^0-9])(0?[1-9]|[12]\d|3[01])(?:$|[^0-9])/);
+      if (dayOnlyMatch) {
+        const dNum = parseInt(dayOnlyMatch[1], 10);
+        detectedSingleDate = `${activeYear}-${String(activeMonth).padStart(2, '0')}-${String(dNum).padStart(2, '0')}`;
+      }
+    }
   }
 
   // Fallback to active date
-  const fallbackDate = detectedSingleDate || options?.fallbackDate || new Date().toISOString().split('T')[0];
+  const fallbackDate = detectedSingleDate || options?.fallbackDate || getLocalTodayIso();
 
   // Determine parsing Mode:
   // Mode A: Multi-day Matrix (if 2 or more day columns detected, like 1..31)
@@ -490,9 +628,11 @@ export function parseComprehensiveAttendance(
         if (!row || row.length === 0) continue;
 
         const name = String(row[colName] || '').trim();
-        const id = String(row[colId] || `EMP-${dayEmployees.length + 1}`).trim();
+        const rawId = String(row[colId] || '').trim();
 
-        if (!name && !id) continue;
+        if ((!name || name === '-') && (!rawId || rawId === '-')) continue;
+        if (!name && /^\d+$/.test(rawId)) continue;
+        const id = rawId || `EMP-${dayEmployees.length + 1}`;
         if (name.toLowerCase().startsWith('total') || id.toLowerCase().startsWith('total')) continue;
         if (name.toLowerCase().startsWith('ringkasan') || name.toLowerCase().startsWith('rekap')) continue;
 
@@ -696,7 +836,8 @@ export function parseComprehensiveAttendance(
     const name = String(row[colName] || '').trim();
     const id = String(row[colId] || '').trim();
 
-    if (!name && !id) continue;
+    if ((!name || name === '-') && (!id || id === '-')) continue;
+    if (!name && /^\d+$/.test(id)) continue; // Skip pre-numbered blank template rows
     if (name.toLowerCase().startsWith('total') || id.toLowerCase().startsWith('total')) continue;
     if (name.toLowerCase().startsWith('ringkasan') || name.toLowerCase().startsWith('rekap')) continue;
 

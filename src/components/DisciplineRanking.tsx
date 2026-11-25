@@ -46,7 +46,7 @@ export const DisciplineRanking: React.FC<DisciplineRankingProps> = ({
 
   // Convert time string "HH:MM" to minutes from midnight
   const timeToMinutes = (timeStr?: string): number => {
-    if (!timeStr) return 9999;
+    if (!timeStr || timeStr === '-') return 9999;
     const m = timeStr.match(/(\d{1,2})[:.](\d{2})/);
     if (!m) return 9999;
     return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
@@ -60,11 +60,42 @@ export const DisciplineRanking: React.FC<DisciplineRankingProps> = ({
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
   };
 
+  // Compute monthly historical track record for tie-breaking when daily checkIn times are not recorded
+  const monthlyTrackRecord = useMemo(() => {
+    const recordMap: Record<string, { onTime: number; lateMins: number; totalDays: number; lateCount: number }> = {};
+    Object.entries(allDailyRecords).forEach(([dateStr, rec]) => {
+      if (!rec.employees) return;
+      const parts = dateStr.split('-');
+      const y = rec.year || parseInt(parts[0], 10);
+      const m = rec.month || parseInt(parts[1], 10);
+      if (y === year && m === monthNumber) {
+        rec.employees.forEach((e) => {
+          const key = e.employeeId || e.name;
+          if (!recordMap[key]) {
+            recordMap[key] = { onTime: 0, lateMins: 0, totalDays: 0, lateCount: 0 };
+          }
+          recordMap[key].totalDays += 1;
+          if (e.normalizedStatus === 'hadir') {
+            recordMap[key].onTime += 1;
+          } else if (e.normalizedStatus === 'telat') {
+            recordMap[key].lateCount += 1;
+            recordMap[key].lateMins += e.lateMinutes || 0;
+          }
+        });
+      }
+    });
+    return recordMap;
+  }, [allDailyRecords, year, monthNumber]);
+
   // Compute ranking based on selected scope
   const rankedList: EmployeeDisciplineRank[] = useMemo(() => {
     if (scope === 'harian') {
       // DAILY RANKING: From current active date records
       if (!currentDayEmployees || currentDayEmployees.length === 0) return [];
+
+      const hasRealCheckInTimes = currentDayEmployees.some(
+        (e) => e.checkIn && e.checkIn !== '-' && e.checkIn.trim() !== ''
+      );
 
       const list = currentDayEmployees.map((emp) => {
         const isHadir = emp.normalizedStatus === 'hadir';
@@ -73,15 +104,27 @@ export const DisciplineRanking: React.FC<DisciplineRankingProps> = ({
         const checkInMins = timeToMinutes(emp.checkIn);
 
         // Daily discipline score:
-        // Hadir tepat waktu: 100 - (checkInMins relative to schedule)
         let score = 0;
         if (isHadir) {
           score = 100;
         } else if (isTelat) {
-          score = Math.max(20, 100 - lateMins * 2);
+          score = Math.max(15, Math.round(100 - lateMins * 1.5));
+        } else if (emp.normalizedStatus === 'cuti') {
+          score = 70;
+        } else if (emp.normalizedStatus === 'sakit') {
+          score = 65;
+        } else if (emp.normalizedStatus === 'izin') {
+          score = 50;
         } else {
           score = 0;
         }
+
+        const track = monthlyTrackRecord[emp.employeeId || emp.name] || {
+          onTime: isHadir ? 1 : 0,
+          lateMins,
+          totalDays: 1,
+          lateCount: isTelat ? 1 : 0,
+        };
 
         return {
           employeeId: emp.employeeId,
@@ -96,27 +139,46 @@ export const DisciplineRanking: React.FC<DisciplineRankingProps> = ({
           totalAbsent: isHadir || isTelat ? 0 : 1,
           attendanceRate: isHadir || isTelat ? 100 : 0,
           disciplineScore: score,
-          avgCheckInTime: emp.checkIn || '-',
-          earliestCheckIn: emp.checkIn || '-',
+          avgCheckInTime: emp.checkIn && emp.checkIn !== '-' ? emp.checkIn : '-',
+          earliestCheckIn: emp.checkIn && emp.checkIn !== '-' ? emp.checkIn : '-',
           badgeLevel: 'standard' as const,
           badgeTitle: 'Peserta',
           _checkInMins: checkInMins,
+          _histOnTime: track.onTime,
+          _histLateMins: track.lateMins,
+          _histTotalDays: track.totalDays,
         };
       });
 
-      // Sort: On-time first by earliest check-in time, then late by lowest late minutes, then absent
+      // Sort order for Daily:
+      // 1. Highest score first
+      // 2. If both 100% (hadir):
+      //    a. If real check-in timestamps exist: earliest check-in first
+      //    b. If check-in timestamps not present: tie-break by highest cumulative on-time days this month, then lowest late minutes
+      // 3. If both late: lowest late minutes first, then cumulative monthly track record
       list.sort((a, b) => {
-        // High score first
         if (b.disciplineScore !== a.disciplineScore) {
           return b.disciplineScore - a.disciplineScore;
         }
-        // If both 100 (tepat waktu), sort by checkIn time (earliest first)
-        if (a._checkInMins !== b._checkInMins) {
-          return a._checkInMins - b._checkInMins;
+        if (a.disciplineScore === 100 && b.disciplineScore === 100) {
+          if (hasRealCheckInTimes && a._checkInMins !== b._checkInMins) {
+            return a._checkInMins - b._checkInMins;
+          }
+          if (b._histOnTime !== a._histOnTime) {
+            return b._histOnTime - a._histOnTime;
+          }
+          if (a._histLateMins !== b._histLateMins) {
+            return a._histLateMins - b._histLateMins;
+          }
+          if (b._histTotalDays !== a._histTotalDays) {
+            return b._histTotalDays - a._histTotalDays;
+          }
         }
-        // Then fewer late minutes
         if (a.totalLateMinutes !== b.totalLateMinutes) {
           return a.totalLateMinutes - b.totalLateMinutes;
+        }
+        if (b._histOnTime !== a._histOnTime) {
+          return b._histOnTime - a._histOnTime;
         }
         return a.name.localeCompare(b.name);
       });
@@ -128,7 +190,7 @@ export const DisciplineRanking: React.FC<DisciplineRankingProps> = ({
 
         if (rank === 1 && item.disciplineScore === 100) {
           badgeLevel = 'gold';
-          badgeTitle = 'Terdisiplin #1 (Paling Pagi)';
+          badgeTitle = hasRealCheckInTimes ? 'Terdisiplin #1 (Paling Pagi)' : 'Terdisiplin #1 (Paling Konsisten)';
         } else if (rank === 2 && item.disciplineScore === 100) {
           badgeLevel = 'silver';
           badgeTitle = 'Terdisiplin #2';
@@ -167,6 +229,10 @@ export const DisciplineRanking: React.FC<DisciplineRankingProps> = ({
           earliestCheckIn: item.earliestCheckIn,
           badgeLevel,
           badgeTitle,
+          monthlyOnTime: item._histOnTime,
+          monthlyLateMinutes: item._histLateMins,
+          monthlyTotalDays: item._histTotalDays,
+          totalDays: 1,
         };
       });
     }
@@ -178,9 +244,9 @@ export const DisciplineRanking: React.FC<DisciplineRankingProps> = ({
       if (!record.employees || record.employees.length === 0) return;
 
       if (scope === 'bulanan') {
-        const d = new Date(dateStr);
-        const y = isNaN(d.getFullYear()) ? 0 : d.getFullYear();
-        const m = isNaN(d.getMonth()) ? 0 : d.getMonth() + 1;
+        const parts = dateStr.split('-');
+        const y = record.year || (parts[0] ? parseInt(parts[0], 10) : 0);
+        const m = record.month || (parts[1] ? parseInt(parts[1], 10) : 0);
         if (y === year && m === monthNumber) {
           recordsToProcess[dateStr] = record.employees;
         }
@@ -206,7 +272,10 @@ export const DisciplineRanking: React.FC<DisciplineRankingProps> = ({
       totalOnTime: number;
       totalLate: number;
       totalLateMinutes: number;
-      totalAbsent: number;
+      totalAlpha: number;
+      totalIzin: number;
+      totalSakit: number;
+      totalCuti: number;
       checkInMinsList: number[];
     }
 
@@ -226,7 +295,10 @@ export const DisciplineRanking: React.FC<DisciplineRankingProps> = ({
             totalOnTime: 0,
             totalLate: 0,
             totalLateMinutes: 0,
-            totalAbsent: 0,
+            totalAlpha: 0,
+            totalIzin: 0,
+            totalSakit: 0,
+            totalCuti: 0,
             checkInMinsList: [],
           };
         }
@@ -239,11 +311,17 @@ export const DisciplineRanking: React.FC<DisciplineRankingProps> = ({
         } else if (emp.normalizedStatus === 'telat') {
           a.totalLate += 1;
           a.totalLateMinutes += emp.lateMinutes || 0;
-        } else {
-          a.totalAbsent += 1;
+        } else if (emp.normalizedStatus === 'alpha') {
+          a.totalAlpha += 1;
+        } else if (emp.normalizedStatus === 'izin') {
+          a.totalIzin += 1;
+        } else if (emp.normalizedStatus === 'sakit') {
+          a.totalSakit += 1;
+        } else if (emp.normalizedStatus === 'cuti') {
+          a.totalCuti += 1;
         }
 
-        if (emp.checkIn) {
+        if (emp.checkIn && emp.checkIn !== '-') {
           const mins = timeToMinutes(emp.checkIn);
           if (mins < 9999) {
             a.checkInMinsList.push(mins);
@@ -254,16 +332,21 @@ export const DisciplineRanking: React.FC<DisciplineRankingProps> = ({
 
     const list = Object.values(aggMap).map((agg) => {
       const totalPresent = agg.totalOnTime + agg.totalLate;
+      const totalAbsent = agg.totalAlpha + agg.totalIzin + agg.totalSakit + agg.totalCuti;
       const attendanceRate = agg.totalDays > 0 ? Math.round((totalPresent / agg.totalDays) * 100) : 0;
       const onTimeRate = agg.totalDays > 0 ? (agg.totalOnTime / agg.totalDays) * 100 : 0;
 
-      // Discipline Score calculation:
-      // 100% on-time and 0 late mins => 100
-      // Late penalty: 1 pt per 5 minutes late total
-      // Absent penalty: 10 pts per absence
-      const latePenalty = Math.min(40, Math.round(agg.totalLateMinutes / 5));
-      const absentPenalty = agg.totalAbsent * 10;
-      const disciplineScore = Math.max(0, Math.min(100, Math.round(onTimeRate - latePenalty - absentPenalty)));
+      // Mathematically balanced discipline formula:
+      // Base: onTimeRate (0 - 100)
+      // Late frequency penalty (max 20)
+      const lateFreqPenalty = (agg.totalLate / agg.totalDays) * 20;
+      // Late duration penalty (max 15)
+      const lateMinPenalty = Math.min(15, Math.round(agg.totalLateMinutes / 15));
+      // Unexcused absence penalty (max 25)
+      const alphaPenalty = (agg.totalAlpha / agg.totalDays) * 25;
+
+      const rawScore = onTimeRate - lateFreqPenalty - lateMinPenalty - alphaPenalty;
+      const disciplineScore = Math.max(0, Math.min(100, Math.round(rawScore)));
 
       // Average check-in time
       const avgCheckInMins =
@@ -284,7 +367,7 @@ export const DisciplineRanking: React.FC<DisciplineRankingProps> = ({
         totalOnTime: agg.totalOnTime,
         totalLate: agg.totalLate,
         totalLateMinutes: agg.totalLateMinutes,
-        totalAbsent: agg.totalAbsent,
+        totalAbsent,
         attendanceRate,
         disciplineScore,
         avgCheckInTime: minutesToTime(avgCheckInMins),
@@ -292,14 +375,16 @@ export const DisciplineRanking: React.FC<DisciplineRankingProps> = ({
         badgeLevel: 'standard' as const,
         badgeTitle: '',
         _avgMins: avgCheckInMins,
+        totalDays: agg.totalDays,
       };
     });
 
     // Sort order for discipline leaderboard:
     // 1. Highest discipline score
-    // 2. Highest on-time count
+    // 2. Highest on-time count (consistency / volume)
     // 3. Lowest late minutes
-    // 4. Earliest avg check-in time
+    // 4. Lowest late count
+    // 5. Highest total recorded days
     list.sort((a, b) => {
       if (b.disciplineScore !== a.disciplineScore) {
         return b.disciplineScore - a.disciplineScore;
@@ -309,6 +394,12 @@ export const DisciplineRanking: React.FC<DisciplineRankingProps> = ({
       }
       if (a.totalLateMinutes !== b.totalLateMinutes) {
         return a.totalLateMinutes - b.totalLateMinutes;
+      }
+      if (a.totalLate !== b.totalLate) {
+        return a.totalLate - b.totalLate;
+      }
+      if (b.totalDays !== a.totalDays) {
+        return b.totalDays - a.totalDays;
       }
       return a._avgMins - b._avgMins;
     });
@@ -327,18 +418,18 @@ export const DisciplineRanking: React.FC<DisciplineRankingProps> = ({
       } else if (rank === 3 && item.disciplineScore >= 70) {
         badgeLevel = 'bronze';
         badgeTitle = 'Juara 3 Terdisiplin 🥉';
-      } else if (item.disciplineScore >= 90) {
+      } else if (item.disciplineScore >= 80) {
         badgeLevel = 'top';
         badgeTitle = 'Sangat Disiplin ⭐';
-      } else if (item.disciplineScore >= 75) {
+      } else if (item.disciplineScore >= 65) {
         badgeLevel = 'standard';
-        badgeTitle = 'Disiplin Baik';
+        badgeTitle = 'Disiplin Baik 👍';
       } else if (item.disciplineScore >= 50) {
         badgeLevel = 'standard';
-        badgeTitle = 'Cukup';
+        badgeTitle = 'Cukup Disiplin';
       } else {
         badgeLevel = 'standard';
-        badgeTitle = 'Perlu Ditingkatkan';
+        badgeTitle = 'Perlu Ditingkatkan ⚠️';
       }
 
       return {
@@ -357,11 +448,12 @@ export const DisciplineRanking: React.FC<DisciplineRankingProps> = ({
         disciplineScore: item.disciplineScore,
         avgCheckInTime: item.avgCheckInTime,
         earliestCheckIn: item.earliestCheckIn,
+        totalDays: item.totalDays,
         badgeLevel,
         badgeTitle,
       };
     });
-  }, [currentDayEmployees, allDailyRecords, scope, year, monthNumber]);
+  }, [currentDayEmployees, allDailyRecords, scope, year, monthNumber, monthlyTrackRecord]);
 
   // Unique departments for filter
   const departments = useMemo(() => {
@@ -405,6 +497,7 @@ export const DisciplineRanking: React.FC<DisciplineRankingProps> = ({
       'Cabang': r.branch,
       'Skor Disiplin (%)': r.disciplineScore,
       'Predikat': r.badgeTitle,
+      'Total Hari Terdata': r.totalDays || 1,
       'Total Hadir Tepat Waktu': r.totalOnTime,
       'Total Telat (Hari)': r.totalLate,
       'Total Menit Terlambat': r.totalLateMinutes,
@@ -578,16 +671,38 @@ export const DisciplineRanking: React.FC<DisciplineRankingProps> = ({
 
                 <div className="mt-4 pt-3 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between text-xs">
                   <div>
-                    <span className="text-[10px] text-slate-400 block">Skor Disiplin</span>
+                    <span className="text-[10px] text-slate-400 block font-medium">Skor Disiplin</span>
                     <span className="text-base font-extrabold text-slate-700 dark:text-slate-200">
                       {top2.disciplineScore}%
                     </span>
                   </div>
                   <div className="text-right">
-                    <span className="text-[10px] text-slate-400 block">Scan Masuk</span>
-                    <span className="font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
-                      <Clock className="w-3 h-3" />
-                      {top2.avgCheckInTime}
+                    <span className="text-[10px] text-slate-400 block font-medium">
+                      {scope === 'harian'
+                        ? top2.avgCheckInTime !== '-'
+                          ? 'Scan Masuk'
+                          : 'Rekor Bulan Ini'
+                        : 'Ketepatan Waktu'}
+                    </span>
+                    <span className="font-semibold text-emerald-600 dark:text-emerald-400 flex items-center justify-end gap-1">
+                      {scope === 'harian' ? (
+                        top2.avgCheckInTime !== '-' ? (
+                          <>
+                            <Clock className="w-3 h-3" />
+                            {top2.avgCheckInTime} WIB
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 className="w-3 h-3" />
+                            {top2.monthlyOnTime ?? top2.totalOnTime} Hari Tepat
+                          </>
+                        )
+                      ) : (
+                        <>
+                          <CheckCircle2 className="w-3 h-3" />
+                          {top2.totalOnTime} Hari ({top2.totalLate > 0 ? `${top2.totalLate}x telat` : '0 telat'})
+                        </>
+                      )}
                     </span>
                   </div>
                 </div>
@@ -634,10 +749,32 @@ export const DisciplineRanking: React.FC<DisciplineRankingProps> = ({
                     </span>
                   </div>
                   <div className="text-right">
-                    <span className="text-[10px] text-slate-400 block">Jam Masuk (Paling Pagi)</span>
+                    <span className="text-[10px] text-slate-400 block font-medium">
+                      {scope === 'harian'
+                        ? top1.avgCheckInTime !== '-'
+                          ? 'Jam Masuk'
+                          : 'Rekor Bulan Ini'
+                        : 'Ketepatan Waktu'}
+                    </span>
                     <span className="text-sm font-bold text-emerald-600 dark:text-emerald-400 flex items-center justify-end gap-1">
-                      <Clock className="w-3.5 h-3.5" />
-                      {top1.avgCheckInTime} WIB
+                      {scope === 'harian' ? (
+                        top1.avgCheckInTime !== '-' ? (
+                          <>
+                            <Clock className="w-3.5 h-3.5" />
+                            {top1.avgCheckInTime} WIB
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                            {top1.monthlyOnTime ?? top1.totalOnTime} Hari Tepat
+                          </>
+                        )
+                      ) : (
+                        <>
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                          {top1.totalOnTime} Hari ({top1.totalLate > 0 ? `${top1.totalLate}x telat` : '0 telat'})
+                        </>
+                      )}
                     </span>
                   </div>
                 </div>
@@ -676,16 +813,38 @@ export const DisciplineRanking: React.FC<DisciplineRankingProps> = ({
 
                 <div className="mt-4 pt-3 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between text-xs">
                   <div>
-                    <span className="text-[10px] text-slate-400 block">Skor Disiplin</span>
+                    <span className="text-[10px] text-slate-400 block font-medium">Skor Disiplin</span>
                     <span className="text-base font-extrabold text-slate-700 dark:text-slate-200">
                       {top3.disciplineScore}%
                     </span>
                   </div>
                   <div className="text-right">
-                    <span className="text-[10px] text-slate-400 block">Scan Masuk</span>
-                    <span className="font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
-                      <Clock className="w-3 h-3" />
-                      {top3.avgCheckInTime}
+                    <span className="text-[10px] text-slate-400 block font-medium">
+                      {scope === 'harian'
+                        ? top3.avgCheckInTime !== '-'
+                          ? 'Scan Masuk'
+                          : 'Rekor Bulan Ini'
+                        : 'Ketepatan Waktu'}
+                    </span>
+                    <span className="font-semibold text-emerald-600 dark:text-emerald-400 flex items-center justify-end gap-1">
+                      {scope === 'harian' ? (
+                        top3.avgCheckInTime !== '-' ? (
+                          <>
+                            <Clock className="w-3 h-3" />
+                            {top3.avgCheckInTime} WIB
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 className="w-3 h-3" />
+                            {top3.monthlyOnTime ?? top3.totalOnTime} Hari Tepat
+                          </>
+                        )
+                      ) : (
+                        <>
+                          <CheckCircle2 className="w-3 h-3" />
+                          {top3.totalOnTime} Hari ({top3.totalLate > 0 ? `${top3.totalLate}x telat` : '0 telat'})
+                        </>
+                      )}
                     </span>
                   </div>
                 </div>
@@ -711,7 +870,9 @@ export const DisciplineRanking: React.FC<DisciplineRankingProps> = ({
                     <th className="py-2.5 px-3 w-14 text-center">Rank</th>
                     <th className="py-2.5 px-3">Nama Karyawan</th>
                     <th className="py-2.5 px-3">Jabatan & Departemen</th>
-                    <th className="py-2.5 px-3 text-center">Scan Masuk</th>
+                    <th className="py-2.5 px-3 text-center">
+                      {scope === 'harian' ? 'Status / Scan' : 'Hari Terdata'}
+                    </th>
                     <th className="py-2.5 px-3 text-center">Tepat Waktu</th>
                     <th className="py-2.5 px-3 text-center">Telat (Mnt)</th>
                     <th className="py-2.5 px-3">Skor Kedisiplinan</th>
@@ -780,15 +941,31 @@ export const DisciplineRanking: React.FC<DisciplineRankingProps> = ({
                           </div>
                         </td>
 
-                        {/* Check In Time */}
-                        <td className="py-2.5 px-3 text-center font-mono">
+                        {/* Check In Time / Attendance */}
+                        <td className="py-2.5 px-3 text-center">
                           {item.avgCheckInTime !== '-' ? (
-                            <span className="inline-flex items-center gap-1 font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-md text-[11px]">
+                            <span className="inline-flex items-center gap-1 font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-md text-[11px] font-mono">
                               <Clock className="w-3 h-3" />
                               {item.avgCheckInTime}
                             </span>
+                          ) : scope === 'harian' ? (
+                            item.disciplineScore === 100 ? (
+                              <span className="inline-flex items-center gap-1 font-medium text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-md text-[11px]">
+                                <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                                Tepat Waktu
+                              </span>
+                            ) : item.totalLate > 0 ? (
+                              <span className="inline-flex items-center gap-1 font-medium text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 rounded-md text-[11px]">
+                                <AlertCircle className="w-3 h-3 text-amber-500" />
+                                Telat {item.totalLateMinutes}m
+                              </span>
+                            ) : (
+                              <span className="text-slate-400 text-xs">-</span>
+                            )
                           ) : (
-                            <span className="text-slate-400">-</span>
+                            <span className="inline-flex items-center gap-1 font-medium text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md text-[11px]">
+                              {item.totalDays || 0} Hari Terdata
+                            </span>
                           )}
                         </td>
 

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import type { User } from 'firebase/auth';
 import {
   initAuth,
@@ -31,6 +31,7 @@ import {
   saveMultipleDaysToFirestore,
   deleteDayFromFirestore,
   subscribeDailyRecords,
+  fetchAllDailyRecords,
   StoredDayRecord,
 } from './services/storageService';
 import {
@@ -45,12 +46,18 @@ import {
   Sparkles,
 } from 'lucide-react';
 
+function getLocalTodayIso(): string {
+  const today = new Date();
+  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+}
+
 export default function App() {
   const [employees, setEmployees] = useState<EmployeeRecord[]>(EMPTY_EMPLOYEES);
-  const [currentDate, setCurrentDate] = useState<string>(() => {
-    const today = new Date();
-    return today.toISOString().split('T')[0];
-  });
+  const [currentDate, setCurrentDate] = useState<string>(() => getLocalTodayIso());
+  const hasAutoSelectedLatestRef = useRef<boolean>(false);
+  const currentDateRef = useRef<string>(currentDate);
+  currentDateRef.current = currentDate;
+
   const [sourceType, setSourceType] = useState<'google-sheets' | 'excel' | 'initial'>('excel');
   const [sourceName, setSourceName] = useState<string>('Firebase Firestore');
   const [connectedSpreadsheetId, setConnectedSpreadsheetId] = useState<string | undefined>();
@@ -123,13 +130,39 @@ export default function App() {
     // Subscribe to real-time daily records from Cloud Firestore
     const unsubscribeFirestore = subscribeDailyRecords(
       (records) => {
-        setAllDailyRecords(records);
+        setAllDailyRecords((prev) => {
+          // Preserve any optimistic records not yet echoed if snapshot is empty while offline
+          const merged = Object.keys(records).length > 0 ? records : prev;
+          return merged;
+        });
+        if (!hasAutoSelectedLatestRef.current) {
+          hasAutoSelectedLatestRef.current = true;
+          const active = currentDateRef.current;
+          const dates = Object.keys(records).sort();
+          if (!records[active] && dates.length > 0) {
+            setCurrentDate(dates[dates.length - 1]);
+          }
+        }
         setIsLoadingFirestore(false);
         setLastSyncTime(new Date());
       },
-      (err) => {
+      async (err) => {
         console.error('Firestore subscription error:', err);
-        setIsLoadingFirestore(false);
+        try {
+          const fallback = await fetchAllDailyRecords();
+          setAllDailyRecords(fallback);
+          if (!hasAutoSelectedLatestRef.current) {
+            hasAutoSelectedLatestRef.current = true;
+            const dates = Object.keys(fallback).sort();
+            if (!fallback[currentDateRef.current] && dates.length > 0) {
+              setCurrentDate(dates[dates.length - 1]);
+            }
+          }
+        } catch (fetchErr) {
+          console.error('Fallback fetch error:', fetchErr);
+        } finally {
+          setIsLoadingFirestore(false);
+        }
       }
     );
 
@@ -150,17 +183,25 @@ export default function App() {
     }
   }, [currentDate, allDailyRecords]);
 
-  // Extract day, month, and year from currentDate
+  // Extract day, month, and year from currentDate (using string splitting to avoid timezone bugs)
   const { activeDay, monthName, year, monthNumber } = useMemo(() => {
-    const d = new Date(currentDate);
-    const day = isNaN(d.getDate()) ? 1 : d.getDate();
+    const parts = (currentDate || '').split('-');
+    let y = parseInt(parts[0], 10);
+    let mNum = parseInt(parts[1], 10);
+    let day = parseInt(parts[2], 10);
+
+    if (isNaN(y) || isNaN(mNum) || isNaN(day)) {
+      const today = new Date();
+      y = today.getFullYear();
+      mNum = today.getMonth() + 1;
+      day = today.getDate();
+    }
+
     const months = [
       'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
       'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
     ];
-    const mNum = isNaN(d.getMonth()) ? 10 : d.getMonth() + 1;
-    const m = months[mNum - 1];
-    const y = isNaN(d.getFullYear()) ? 2026 : d.getFullYear();
+    const m = months[mNum - 1] || 'Januari';
     return { activeDay: day, monthName: m, year: y, monthNumber: mNum };
   }, [currentDate]);
 
@@ -194,7 +235,12 @@ export default function App() {
     showToast('Telah keluar dari akun Google.');
   };
 
-  // Perform Google Sheets sync if connected
+  const handleSelectDateManual = useCallback((nextDate: string) => {
+    hasAutoSelectedLatestRef.current = true;
+    setCurrentDate(nextDate);
+  }, []);
+
+  // Perform Google Sheets sync + Firestore refresh
   const performSync = useCallback(async () => {
     if (isSyncing) return;
     setIsSyncing(true);
@@ -208,7 +254,13 @@ export default function App() {
         );
         const updatedEmployees = parseRowsToEmployees(rawRows);
         if (updatedEmployees.length > 0) {
-          await saveDayToFirestore(currentDate, updatedEmployees, 'Google Sheets Sync');
+          const saved = await saveDayToFirestore(currentDate, updatedEmployees, 'Google Sheets Sync');
+          setAllDailyRecords((prev) => ({ ...prev, [saved.date]: saved }));
+        }
+      } else {
+        const fresh = await fetchAllDailyRecords();
+        if (Object.keys(fresh).length > 0) {
+          setAllDailyRecords(fresh);
         }
       }
       setLastSyncTime(new Date());
@@ -239,6 +291,7 @@ export default function App() {
     targetDate?: string,
     multiDayRecords?: Record<string, EmployeeRecord[]>
   ) => {
+    hasAutoSelectedLatestRef.current = true;
     setSourceType(newType);
     setSourceName(newName);
     setConnectedSpreadsheetId(sheetId);
@@ -253,30 +306,38 @@ export default function App() {
         batchPayload[d] = { employees: multiDayRecords[d], sourceName: newName };
       });
       try {
-        const savedDates = await saveMultipleDaysToFirestore(batchPayload);
+        const { savedDates, savedRecords } = await saveMultipleDaysToFirestore(batchPayload);
+        if (Object.keys(savedRecords).length > 0) {
+          setAllDailyRecords((prev) => ({ ...prev, ...savedRecords }));
+        }
         const lastDate = savedDates[savedDates.length - 1];
         if (lastDate) setCurrentDate(lastDate);
         showToast(`Berhasil menyimpan ${savedDates.length} hari data presensi ke Firebase!`);
       } catch (err: any) {
         showToast('Gagal menyimpan data multi-hari ke Firebase.');
+        throw err;
       }
     } else {
       // SINGLE DAY SAVE
       const dateToSave = targetDate || currentDate;
       try {
-        await saveDayToFirestore(dateToSave, newEmployees, newName);
-        setCurrentDate(dateToSave);
-        showToast(`Data presensi tanggal ${dateToSave} (${newEmployees.length} karyawan) berhasil disimpan ke Firebase.`);
+        const savedRecord = await saveDayToFirestore(dateToSave, newEmployees, newName);
+        setAllDailyRecords((prev) => ({ ...prev, [savedRecord.date]: savedRecord }));
+        setCurrentDate(savedRecord.date);
+        showToast(`Data presensi tanggal ${savedRecord.date} (${newEmployees.length} karyawan) berhasil disimpan ke Firebase.`);
       } catch (err: any) {
         showToast('Gagal menyimpan data ke Firebase.');
+        throw err;
       }
     }
   };
 
   const handleAddEmployee = async (newRecord: EmployeeRecord) => {
+    hasAutoSelectedLatestRef.current = true;
     const updated = [newRecord, ...employees];
     try {
-      await saveDayToFirestore(currentDate, updated, sourceName);
+      const savedRecord = await saveDayToFirestore(currentDate, updated, sourceName);
+      setAllDailyRecords((prev) => ({ ...prev, [savedRecord.date]: savedRecord }));
       showToast(`Input presensi "${newRecord.name}" berhasil disimpan ke Firebase.`);
     } catch (err: any) {
       showToast('Gagal menyimpan ke Firebase Firestore.');
@@ -286,6 +347,11 @@ export default function App() {
   const handleDeleteDay = async (dateStr: string) => {
     try {
       await deleteDayFromFirestore(dateStr);
+      setAllDailyRecords((prev) => {
+        const next = { ...prev };
+        delete next[dateStr];
+        return next;
+      });
       showToast(`Data presensi tanggal ${dateStr} berhasil dihapus dari Firebase.`);
     } catch (err: any) {
       showToast('Gagal menghapus data dari Firebase.');
@@ -294,8 +360,23 @@ export default function App() {
 
   const handleSelectDayFromChart = (day: number) => {
     const formatted = `${year}-${String(monthNumber).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    setCurrentDate(formatted);
+    handleSelectDateManual(formatted);
   };
+
+  const recentStoredDates = useMemo(() => {
+    return Object.keys(allDailyRecords).sort().reverse().slice(0, 8);
+  }, [allDailyRecords]);
+
+  const existingRecordMeta = useMemo(() => {
+    const map: Record<string, { totalEmployees: number; sourceName: string }> = {};
+    Object.entries(allDailyRecords).forEach(([d, rec]) => {
+      map[d] = {
+        totalEmployees: rec.employees?.length || rec.totalEmployees || 0,
+        sourceName: rec.sourceName || 'Firebase Firestore',
+      };
+    });
+    return map;
+  }, [allDailyRecords]);
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans transition-colors">
@@ -310,7 +391,7 @@ export default function App() {
       {/* Main Top Header */}
       <Header
         currentDate={currentDate}
-        onDateChange={setCurrentDate}
+        onDateChange={handleSelectDateManual}
         sourceType={sourceType}
         sourceName={sourceName}
         autoSync={autoSync}
@@ -441,6 +522,24 @@ export default function App() {
                     <span>Input Manual</span>
                   </button>
                 </div>
+                {recentStoredDates.length > 0 && (
+                  <div className="pt-3 border-t border-slate-100 dark:border-slate-800">
+                    <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-2">
+                      Arsip File Terakhir Tersimpan di Firebase (klik untuk membuka):
+                    </p>
+                    <div className="flex flex-wrap items-center justify-center gap-1.5">
+                      {recentStoredDates.map((d) => (
+                        <button
+                          key={d}
+                          onClick={() => handleSelectDateManual(d)}
+                          className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-emerald-50 dark:bg-slate-800 dark:hover:bg-emerald-950/40 text-slate-700 dark:text-slate-200 hover:text-emerald-700 dark:hover:text-emerald-300 border border-slate-200 dark:border-slate-700 text-[11px] font-mono transition"
+                        >
+                          {d} ({allDailyRecords[d]?.sourceName || 'Excel'})
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -533,7 +632,7 @@ export default function App() {
             currentMonth={monthNumber}
             records={allDailyRecords}
             onSelectDate={(dateStr) => {
-              setCurrentDate(dateStr);
+              handleSelectDateManual(dateStr);
               setViewMode('harian');
               showToast(`Membuka data presensi tanggal ${dateStr}`);
             }}
@@ -561,6 +660,7 @@ export default function App() {
           sheetName: connectedSheetName,
         }}
         currentSelectedDate={currentDate}
+        existingRecordDates={existingRecordMeta}
       />
 
       <AddRecordModal

@@ -24,17 +24,39 @@ export async function parseExcelFile(
     throw new Error('File excel tidak memiliki sheet.');
   }
 
-  const targetSheetName = options?.sheetName && sheetNames.includes(options.sheetName)
-    ? options.sheetName
-    : sheetNames[0];
+  const parseSheet = (name: string) => {
+    const sheet = workbook.Sheets[name];
+    const rawRows = XLSX.utils.sheet_to_json(sheet, {
+      header: 1,
+      raw: false,
+      dateNF: 'yyyy-mm-dd',
+    }) as any[][];
+    const parsed = parseComprehensiveAttendance(rawRows, {
+      fallbackDate: options?.fallbackDate,
+      fileName: file.name,
+    });
+    return { rawRows, parsed };
+  };
 
-  const sheet = workbook.Sheets[targetSheetName];
-  const rawRows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false }) as any[][];
+  let targetSheetName =
+    options?.sheetName && sheetNames.includes(options.sheetName)
+      ? options.sheetName
+      : sheetNames[0];
 
-  const parsed = parseComprehensiveAttendance(rawRows, {
-    fallbackDate: options?.fallbackDate,
-    fileName: file.name,
-  });
+  let { rawRows, parsed } = parseSheet(targetSheetName);
+
+  // If no sheet was explicitly chosen and the first sheet had 0 employees, scan remaining sheets
+  if (!options?.sheetName && parsed.totalEmployees === 0 && parsed.totalDays === 0 && sheetNames.length > 1) {
+    for (const candidateSheet of sheetNames.slice(1)) {
+      const attempt = parseSheet(candidateSheet);
+      if (attempt.parsed.totalEmployees > 0 || attempt.parsed.totalDays > 0) {
+        targetSheetName = candidateSheet;
+        rawRows = attempt.rawRows;
+        parsed = attempt.parsed;
+        break;
+      }
+    }
+  }
 
   return {
     ...parsed,

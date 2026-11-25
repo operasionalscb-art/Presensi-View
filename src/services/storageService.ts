@@ -5,6 +5,7 @@ import {
   deleteDoc,
   onSnapshot,
   getDocs,
+  writeBatch,
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from './firebaseAuth';
 import { EmployeeRecord } from '../types/attendance';
@@ -80,6 +81,89 @@ const MONTH_NAMES = [
   'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
 ];
 
+function buildDayRecordPayload(
+  dateStr: string,
+  employees: EmployeeRecord[],
+  sourceName: string = 'Upload Excel'
+): StoredDayRecord {
+  const cleanDate = String(dateStr || '').trim();
+  const match = cleanDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    throw new Error(`Format tanggal tidak valid ("${dateStr}"). Gunakan format YYYY-MM-DD.`);
+  }
+
+  const year = parseInt(match[1], 10);
+  const month = parseInt(match[2], 10);
+  const day = parseInt(match[3], 10);
+
+  if (year < 2000 || year > 2100 || month < 1 || month > 12 || day < 1 || day > 31) {
+    throw new Error(`Tanggal di luar jangkauan yang valid ("${cleanDate}").`);
+  }
+
+  if (employees.length > 1000) {
+    throw new Error(`Jumlah baris karyawan (${employees.length}) melebihi batas maksimal 1000 baris per hari.`);
+  }
+
+  const nowIso = new Date().toISOString();
+
+  return {
+    date: cleanDate,
+    day,
+    month,
+    year,
+    sourceName: String(sourceName || 'Upload Excel').slice(0, 200),
+    uploadedAt: nowIso,
+    updatedAt: nowIso,
+    totalEmployees: employees.length,
+    employees: employees.map((e, index) => ({
+      no: Number(e.no) || index + 1,
+      employeeId: String(e.employeeId || `EMP-${index + 1}`).trim().slice(0, 64),
+      name: String(e.name || e.employeeId || `Karyawan ${index + 1}`).trim().slice(0, 150),
+      date: cleanDate,
+      shift: String(e.shift || 'Guru').trim(),
+      scheduleIn: String(e.scheduleIn || '07:00').trim(),
+      scheduleOut: String(e.scheduleOut || '16:00').trim(),
+      checkIn: String(e.checkIn || '').trim(),
+      checkOut: String(e.checkOut || '').trim(),
+      department: String(e.department || 'Umum').trim().slice(0, 100),
+      branch: String(e.branch || 'Pusat').trim().slice(0, 100),
+      jobPosition: String(e.jobPosition || 'Staff').trim().slice(0, 100),
+      jobLevel: String(e.jobLevel || 'Staff').trim().slice(0, 100),
+      joinDate: String(e.joinDate || '-').trim().slice(0, 50),
+      employmentStatus: String(e.employmentStatus || 'Contract').trim().slice(0, 50),
+      rawStatus: String(e.rawStatus || '').trim().slice(0, 50),
+      normalizedStatus: e.normalizedStatus || 'hadir',
+      keterangan: String(e.keterangan || '').trim().slice(0, 500),
+      lateMinutes: typeof e.lateMinutes === 'number' && !isNaN(e.lateMinutes) ? e.lateMinutes : 0,
+      earlyLeaveMinutes:
+        typeof e.earlyLeaveMinutes === 'number' && !isNaN(e.earlyLeaveMinutes) ? e.earlyLeaveMinutes : 0,
+    })),
+  };
+}
+
+function normalizeDocSnapshot(docId: string, rawData: any): StoredDayRecord | null {
+  if (!rawData || !Array.isArray(rawData.employees)) return null;
+  const dateKey = String(rawData.date || docId || '').trim();
+  if (!dateKey) return null;
+
+  const parts = dateKey.split('-');
+  const year = Number(rawData.year) || (parts[0] ? parseInt(parts[0], 10) : 2026);
+  const month = Number(rawData.month) || (parts[1] ? parseInt(parts[1], 10) : 1);
+  const day = Number(rawData.day) || (parts[2] ? parseInt(parts[2], 10) : 1);
+
+  return {
+    ...rawData,
+    date: dateKey,
+    year,
+    month,
+    day,
+    sourceName: rawData.sourceName || 'Firebase Firestore',
+    uploadedAt: rawData.uploadedAt || new Date().toISOString(),
+    totalEmployees: Number(rawData.totalEmployees) || rawData.employees.length,
+    employees: rawData.employees,
+  };
+}
+
 /**
  * Save or overwrite a daily attendance record in Cloud Firestore
  */
@@ -87,65 +171,60 @@ export async function saveDayToFirestore(
   dateStr: string,
   employees: EmployeeRecord[],
   sourceName: string = 'Upload Excel'
-): Promise<void> {
-  const parts = dateStr.split('-');
-  const year = parts.length === 3 ? parseInt(parts[0], 10) : new Date(dateStr).getFullYear();
-  const month = parts.length === 3 ? parseInt(parts[1], 10) : new Date(dateStr).getMonth() + 1;
-  const day = parts.length === 3 ? parseInt(parts[2], 10) : new Date(dateStr).getDate();
-
-  const recordPayload: StoredDayRecord = {
-    date: dateStr,
-    day,
-    month,
-    year,
-    sourceName,
-    uploadedAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    totalEmployees: employees.length,
-    // Clean and normalize objects before saving to Firestore
-    employees: employees.map((e, index) => ({
-      no: e.no || index + 1,
-      employeeId: String(e.employeeId || `EMP-${index + 1}`).trim(),
-      name: String(e.name || '').trim(),
-      department: String(e.department || 'Umum').trim(),
-      branch: String(e.branch || 'Pusat').trim(),
-      jobPosition: String(e.jobPosition || 'Staff').trim(),
-      jobLevel: String(e.jobLevel || 'Staff').trim(),
-      joinDate: String(e.joinDate || '-').trim(),
-      employmentStatus: String(e.employmentStatus || 'Contract').trim(),
-      rawStatus: String(e.rawStatus || '').trim(),
-      normalizedStatus: e.normalizedStatus,
-      keterangan: String(e.keterangan || '').trim(),
-      lateMinutes: e.lateMinutes || 0,
-    })),
-  };
-
-  const docPath = `${COLLECTION_NAME}/${dateStr}`;
+): Promise<StoredDayRecord> {
+  const recordPayload = buildDayRecordPayload(dateStr, employees, sourceName);
+  const docPath = `${COLLECTION_NAME}/${recordPayload.date}`;
   try {
-    await setDoc(doc(db, COLLECTION_NAME, dateStr), recordPayload);
+    await setDoc(doc(db, COLLECTION_NAME, recordPayload.date), recordPayload);
+    return recordPayload;
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, docPath);
+    throw error;
   }
 }
 
 /**
- * Save multiple daily attendance records to Cloud Firestore (e.g. from a monthly spreadsheet or multi-date upload)
+ * Save multiple daily attendance records to Cloud Firestore atomically in batches
  */
 export async function saveMultipleDaysToFirestore(
   records: Record<string, { employees: EmployeeRecord[]; sourceName?: string }>
-): Promise<string[]> {
-  const dates = Object.keys(records);
+): Promise<{ savedDates: string[]; savedRecords: Record<string, StoredDayRecord> }> {
+  const dates = Object.keys(records).sort();
   const savedDates: string[] = [];
+  const savedRecords: Record<string, StoredDayRecord> = {};
 
+  const payloads: StoredDayRecord[] = [];
   for (const dateStr of dates) {
     const entry = records[dateStr];
     if (entry && entry.employees && entry.employees.length > 0) {
-      await saveDayToFirestore(dateStr, entry.employees, entry.sourceName || 'Upload Excel');
-      savedDates.push(dateStr);
+      const payload = buildDayRecordPayload(dateStr, entry.employees, entry.sourceName || 'Upload Excel');
+      payloads.push(payload);
     }
   }
 
-  return savedDates;
+  if (payloads.length === 0) {
+    return { savedDates, savedRecords };
+  }
+
+  try {
+    const CHUNK_SIZE = 400;
+    for (let i = 0; i < payloads.length; i += CHUNK_SIZE) {
+      const chunk = payloads.slice(i, i + CHUNK_SIZE);
+      const batch = writeBatch(db);
+      for (const payload of chunk) {
+        batch.set(doc(db, COLLECTION_NAME, payload.date), payload);
+      }
+      await batch.commit();
+      for (const payload of chunk) {
+        savedDates.push(payload.date);
+        savedRecords[payload.date] = payload;
+      }
+    }
+    return { savedDates, savedRecords };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, COLLECTION_NAME);
+    throw error;
+  }
 }
 
 /**
@@ -157,6 +236,25 @@ export async function deleteDayFromFirestore(dateStr: string): Promise<void> {
     await deleteDoc(doc(db, COLLECTION_NAME, dateStr));
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, docPath);
+  }
+}
+
+/**
+ * Clear all daily attendance records from Firestore (useful for resetting or cleaning simulation)
+ */
+export async function clearAllDailyRecordsFromFirestore(): Promise<number> {
+  const collectionRef = collection(db, COLLECTION_NAME);
+  try {
+    const snapshot = await getDocs(collectionRef);
+    let count = 0;
+    for (const docSnap of snapshot.docs) {
+      await deleteDoc(docSnap.ref);
+      count++;
+    }
+    return count;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, COLLECTION_NAME);
+    return 0;
   }
 }
 
@@ -174,16 +272,16 @@ export function subscribeDailyRecords(
     (snapshot) => {
       const recordsMap: Record<string, StoredDayRecord> = {};
       snapshot.forEach((docSnap) => {
-        const data = docSnap.data() as StoredDayRecord;
-        if (data && data.date) {
-          recordsMap[data.date] = data;
+        const normalized = normalizeDocSnapshot(docSnap.id, docSnap.data());
+        if (normalized) {
+          recordsMap[normalized.date] = normalized;
         }
       });
       onUpdate(recordsMap);
     },
     (error) => {
-      handleFirestoreError(error, OperationType.GET, COLLECTION_NAME);
       if (onError) onError(error);
+      handleFirestoreError(error, OperationType.GET, COLLECTION_NAME);
     }
   );
 }
@@ -196,9 +294,9 @@ export async function fetchAllDailyRecords(): Promise<Record<string, StoredDayRe
     const querySnapshot = await getDocs(collection(db, COLLECTION_NAME));
     const recordsMap: Record<string, StoredDayRecord> = {};
     querySnapshot.forEach((docSnap) => {
-      const data = docSnap.data() as StoredDayRecord;
-      if (data && data.date) {
-        recordsMap[data.date] = data;
+      const normalized = normalizeDocSnapshot(docSnap.id, docSnap.data());
+      if (normalized) {
+        recordsMap[normalized.date] = normalized;
       }
     });
     return recordsMap;

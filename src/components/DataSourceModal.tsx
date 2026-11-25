@@ -41,7 +41,7 @@ interface DataSourceModalProps {
     sheetName?: string,
     targetDate?: string,
     multiDayRecords?: Record<string, EmployeeRecord[]>
-  ) => void;
+  ) => Promise<void>;
   activeSource: {
     type: 'google-sheets' | 'excel' | 'initial';
     name: string;
@@ -49,6 +49,7 @@ interface DataSourceModalProps {
     sheetName?: string;
   };
   currentSelectedDate: string;
+  existingRecordDates?: Record<string, { totalEmployees: number; sourceName: string }>;
 }
 
 export const DataSourceModal: React.FC<DataSourceModalProps> = ({
@@ -60,6 +61,7 @@ export const DataSourceModal: React.FC<DataSourceModalProps> = ({
   onApplyNewData,
   activeSource,
   currentSelectedDate,
+  existingRecordDates,
 }) => {
   const [activeTab, setActiveTab] = useState<'sheets' | 'excel'>('excel');
   const [sheetUrlOrId, setSheetUrlOrId] = useState(activeSource.spreadsheetId || '');
@@ -72,6 +74,7 @@ export const DataSourceModal: React.FC<DataSourceModalProps> = ({
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   // Excel parsed preview state
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [parsedResult, setParsedResult] = useState<ExcelParseResult | null>(null);
   const [uploadedFileName, setUploadedFileName] = useState<string>('');
   const [targetDateInput, setTargetDateInput] = useState<string>(currentSelectedDate);
@@ -87,6 +90,7 @@ export const DataSourceModal: React.FC<DataSourceModalProps> = ({
   // Reset file preview when modal closes
   useEffect(() => {
     if (!isOpen) {
+      setUploadedFile(null);
       setParsedResult(null);
       setErrorMsg(null);
       setSuccessMsg(null);
@@ -167,7 +171,7 @@ export const DataSourceModal: React.FC<DataSourceModalProps> = ({
       }
 
       if (parsed.totalDays > 1) {
-        onApplyNewData(
+        await onApplyNewData(
           parsed.primaryEmployees,
           'google-sheets',
           sheetTitle,
@@ -180,7 +184,7 @@ export const DataSourceModal: React.FC<DataSourceModalProps> = ({
           `Berhasil menyimpan ${parsed.totalDays} hari data presensi dari Google Sheets ke Firebase!`
         );
       } else {
-        onApplyNewData(
+        await onApplyNewData(
           parsed.primaryEmployees,
           'google-sheets',
           sheetTitle,
@@ -206,6 +210,8 @@ export const DataSourceModal: React.FC<DataSourceModalProps> = ({
   // Handle Excel upload with preview step
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    // Always clear input value so re-selecting the same file works cleanly
+    e.target.value = '';
     if (!file) return;
 
     setErrorMsg(null);
@@ -215,12 +221,34 @@ export const DataSourceModal: React.FC<DataSourceModalProps> = ({
       if (result.totalEmployees === 0 && result.totalDays === 0) {
         throw new Error('Tidak ada data karyawan yang berhasil terbaca dari file Excel ini. Periksa kembali struktur tabel.');
       }
+      setUploadedFile(file);
       setUploadedFileName(file.name);
       setParsedResult(result);
       setTargetDateInput(result.primaryDate);
     } catch (err: any) {
       setErrorMsg(err.message || 'Gagal membaca file Excel.');
+      setUploadedFile(null);
       setParsedResult(null);
+    }
+  };
+
+  // Switch active Excel sheet tab
+  const handleSwitchExcelSheet = async (sheetName: string) => {
+    if (!uploadedFile) return;
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    try {
+      const result = await parseExcelFile(uploadedFile, {
+        sheetName,
+        fallbackDate: currentSelectedDate,
+      });
+      if (result.totalEmployees === 0 && result.totalDays === 0) {
+        setErrorMsg(`Sheet "${sheetName}" tidak berisi baris data karyawan.`);
+      }
+      setParsedResult(result);
+      setTargetDateInput(result.primaryDate);
+    } catch (err: any) {
+      setErrorMsg(err.message || `Gagal membaca sheet "${sheetName}".`);
     }
   };
 
@@ -228,8 +256,10 @@ export const DataSourceModal: React.FC<DataSourceModalProps> = ({
   const handleConfirmSingleDaySave = async () => {
     if (!parsedResult) return;
     setIsSaving(true);
+    setErrorMsg(null);
     try {
-      const empsToSave = parsedResult.dailyRecords[targetDateInput] || parsedResult.primaryEmployees;
+      const rawEmps = parsedResult.dailyRecords[targetDateInput] || parsedResult.primaryEmployees;
+      const empsToSave = rawEmps.map((emp) => ({ ...emp, date: targetDateInput }));
       await onApplyNewData(
         empsToSave,
         'excel',
@@ -241,7 +271,7 @@ export const DataSourceModal: React.FC<DataSourceModalProps> = ({
       setSuccessMsg(`Data tanggal ${targetDateInput} (${empsToSave.length} karyawan) tersimpan di Firebase.`);
       setTimeout(() => {
         onClose();
-      }, 800);
+      }, 700);
     } catch (err: any) {
       setErrorMsg(err.message || 'Gagal menyimpan ke Firebase.');
     } finally {
@@ -253,6 +283,7 @@ export const DataSourceModal: React.FC<DataSourceModalProps> = ({
   const handleConfirmMultiDaySave = async () => {
     if (!parsedResult || !parsedResult.dailyRecords) return;
     setIsSaving(true);
+    setErrorMsg(null);
     try {
       await onApplyNewData(
         parsedResult.primaryEmployees,
@@ -266,7 +297,7 @@ export const DataSourceModal: React.FC<DataSourceModalProps> = ({
       setSuccessMsg(`Berhasil menyimpan seluruh ${parsedResult.totalDays} hari data ke Firebase.`);
       setTimeout(() => {
         onClose();
-      }, 800);
+      }, 700);
     } catch (err: any) {
       setErrorMsg(err.message || 'Gagal menyimpan data multi-hari ke Firebase.');
     } finally {
@@ -416,12 +447,35 @@ export const DataSourceModal: React.FC<DataSourceModalProps> = ({
                       </div>
                     </div>
                     <button
-                      onClick={() => setParsedResult(null)}
+                      onClick={() => {
+                        setUploadedFile(null);
+                        setParsedResult(null);
+                        setErrorMsg(null);
+                      }}
                       className="text-xs text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 underline"
                     >
                       Ganti File
                     </button>
                   </div>
+
+                  {parsedResult.sheetNames.length > 1 && (
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                        Pilih Sheet Excel ({parsedResult.sheetNames.length} tab tersedia):
+                      </label>
+                      <select
+                        value={parsedResult.activeSheet}
+                        onChange={(e) => handleSwitchExcelSheet(e.target.value)}
+                        className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 dark:text-slate-200 outline-none"
+                      >
+                        {parsedResult.sheetNames.map((s) => (
+                          <option key={s} value={s}>
+                            {s}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
 
                   {/* Multi-Day Detected Case */}
                   {parsedResult.totalDays > 1 ? (
@@ -496,9 +550,15 @@ export const DataSourceModal: React.FC<DataSourceModalProps> = ({
                             className="bg-transparent text-xs text-slate-800 dark:text-slate-200 outline-none w-full font-medium"
                           />
                         </div>
-                        <span className="text-[10px] text-slate-400 mt-1 block">
-                          Tanggal di atas terdeteksi otomatis dari file, Anda dapat mengubahnya jika diperlukan sebelum disimpan.
-                        </span>
+                        {existingRecordDates?.[targetDateInput] ? (
+                          <span className="text-[11px] text-amber-600 dark:text-amber-400 mt-1 block font-medium">
+                            Catatan: Tanggal {targetDateInput} sudah memiliki data ({existingRecordDates[targetDateInput].totalEmployees} org dari "{existingRecordDates[targetDateInput].sourceName}"). Menyimpan akan memperbarui tanggal tersebut.
+                          </span>
+                        ) : (
+                          <span className="text-[10px] text-slate-400 mt-1 block">
+                            Tanggal di atas terdeteksi otomatis dari file, Anda dapat mengubahnya jika diperlukan sebelum disimpan.
+                          </span>
+                        )}
                       </div>
 
                       {/* Single Day Save Button */}

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Calendar,
   Clock,
@@ -38,6 +38,11 @@ export const MonthlyYearlyReports: React.FC<MonthlyYearlyReportsProps> = ({
   const [selectedMonth, setSelectedMonth] = useState<number>(currentMonth);
   const [selectedYear, setSelectedYear] = useState<number>(currentYear);
   const [confirmDeleteDate, setConfirmDeleteDate] = useState<string | null>(null);
+
+  useEffect(() => {
+    setSelectedMonth(currentMonth);
+    setSelectedYear(currentYear);
+  }, [currentMonth, currentYear]);
 
   const monthlyReport: MonthReport = calculateMonthlyReport(records, selectedYear, selectedMonth);
   const yearlyReport: YearReport = calculateYearlyReport(records, selectedYear);

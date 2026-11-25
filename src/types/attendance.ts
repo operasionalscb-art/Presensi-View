@@ -43,6 +43,10 @@ export interface EmployeeDisciplineRank {
   earliestCheckIn?: string;
   badgeLevel: 'gold' | 'silver' | 'bronze' | 'top' | 'standard';
   badgeTitle: string;
+  monthlyOnTime?: number;
+  monthlyLateMinutes?: number;
+  monthlyTotalDays?: number;
+  totalDays?: number;
 }
 
 export interface DailySummary {
